@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.routing import Route
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 
@@ -9,6 +10,7 @@ from .api import auth, imports, intake, portfolio, templates, usecases
 from .auth import hash_password
 from .config import get_settings
 from .db import SessionLocal, init_db
+from .mcp_server import build_asgi_app, build_server
 from .models import Role, UseCase, User
 from .services.templates import sync_templates
 
@@ -33,11 +35,16 @@ async def lifespan(app: FastAPI):
             from .seed import seed_demo
 
             await seed_demo(session)
-    yield
+    # MCP Streamable HTTP transport needs its session manager running for the app's lifetime
+    async with mcp_server.session_manager.run():
+        yield
 
 
 app = FastAPI(title="UseCase Hub", version="0.1.0", lifespan=lifespan,
               description="AI use case intake, normalization, registry and portfolio intelligence.")
+
+mcp_server = build_server()
+app.router.routes.append(Route("/mcp", endpoint=build_asgi_app(mcp_server), methods=["GET", "POST", "DELETE"]))
 
 app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_list, allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])

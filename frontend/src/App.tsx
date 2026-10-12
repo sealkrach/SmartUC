@@ -9,6 +9,7 @@ import Graph from "./pages/Graph";
 import Import from "./pages/Import";
 import Intake from "./pages/Intake";
 import Login from "./pages/Login";
+import McpApi from "./pages/McpApi";
 import NewUseCase from "./pages/NewUseCase";
 import Registry from "./pages/Registry";
 import RelationsInbox from "./pages/RelationsInbox";
@@ -43,6 +44,7 @@ export default function App() {
                 <Route path="/graph" element={<Graph />} />
                 <Route path="/import" element={<Import />} />
                 <Route path="/templates" element={<Templates />} />
+                <Route path="/mcp" element={<McpApi />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>

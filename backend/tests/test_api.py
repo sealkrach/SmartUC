@@ -3,7 +3,7 @@ import pytest
 from app.services import templates as T
 from app.services.workflow import allowed_transitions, can_transition
 
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
 # ----------------------------------------------------------------- pure logic
