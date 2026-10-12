@@ -1,0 +1,348 @@
+# UseCase Hub — default AI Use Case Canvas
+#
+# Field types: text | longtext | enum | multi_enum | list | number | date | person | entity_list
+#   entity_list fields declare `entity_kind: system|data|team|model` — their values are extracted
+#   as shared entities and drive structural dependency detection.
+# `weight` drives the completeness score; `required` fields block submission.
+# `ai_hint` tells the intake agent / normalizer how to fill the field.
+# `ask_priority` (1 = first) orders the interview; fields without it are asked last.
+
+key: ai-usecase-canvas
+version: 1
+name: AI Use Case Canvas
+description: >
+  Default canvas for describing an AI use case end-to-end: problem, solution, data, systems,
+  value, feasibility, risk (EU AI Act) and delivery. Inspired by AI canvases and
+  governance registries (Credo AI, watsonx.governance, Backstage descriptors).
+is_default: true
+
+sections:
+  - id: identity
+    title: Identity
+    fields:
+      - id: title
+        label: Title
+        type: text
+        required: true
+        weight: 3
+        ask_priority: 1
+        ai_hint: Short, specific, action-oriented (e.g. "Automated triage of incoming supplier invoices").
+      - id: summary
+        label: Summary
+        type: longtext
+        required: true
+        weight: 3
+        ask_priority: 2
+        ai_hint: One paragraph a steering committee can read in 20 seconds. What, for whom, why now.
+      - id: business_unit
+        label: Business unit / domain
+        type: text
+        required: true
+        weight: 2
+        ask_priority: 3
+      - id: sponsor
+        label: Business sponsor
+        type: person
+        weight: 1
+        ask_priority: 9
+      - id: product_owner
+        label: Product owner
+        type: person
+        weight: 1
+        ask_priority: 9
+
+  - id: problem
+    title: Problem
+    fields:
+      - id: problem_statement
+        label: Problem statement
+        type: longtext
+        required: true
+        weight: 3
+        ask_priority: 2
+        ai_hint: The pain, in business terms. Avoid describing the solution here.
+      - id: target_users
+        label: Target users
+        type: list
+        required: true
+        weight: 2
+        ask_priority: 3
+        ai_hint: Roles, not names. Include approximate headcount when known.
+      - id: current_process
+        label: Current process (as-is)
+        type: longtext
+        weight: 2
+        ask_priority: 5
+      - id: pain_points
+        label: Pain points
+        type: list
+        weight: 2
+        ask_priority: 4
+
+  - id: solution
+    title: Solution
+    fields:
+      - id: ai_capability
+        label: Primary AI capability
+        type: enum
+        required: true
+        weight: 2
+        ask_priority: 4
+        options:
+          - generation
+          - summarization
+          - classification
+          - extraction
+          - prediction
+          - recommendation
+          - conversational_agent
+          - agentic_workflow
+          - search_rag
+          - computer_vision
+          - speech
+          - optimization
+          - anomaly_detection
+          - other
+      - id: solution_description
+        label: Solution description (to-be)
+        type: longtext
+        required: true
+        weight: 3
+        ask_priority: 4
+        ai_hint: How AI changes the process. Mention inputs, outputs and where a human stays in control.
+      - id: human_in_the_loop
+        label: Human in the loop
+        type: enum
+        required: true
+        weight: 2
+        ask_priority: 6
+        options: [none, review_before_action, exception_only, full_autonomy]
+        ai_hint: '"none" means AI only assists; "full_autonomy" means it acts without review.'
+      - id: interaction_mode
+        label: Interaction mode
+        type: enum
+        weight: 1
+        ask_priority: 8
+        options: [chat, embedded_in_app, batch, api, copilot]
+
+  - id: data
+    title: Data
+    fields:
+      - id: data_sources
+        label: Data sources
+        type: entity_list
+        entity_kind: data
+        required: true
+        weight: 3
+        ask_priority: 5
+        ai_hint: Named datasets, documents or streams (e.g. "ServiceNow incident tickets", "Customer contracts (SharePoint)").
+      - id: data_sensitivity
+        label: Data sensitivity
+        type: enum
+        required: true
+        weight: 2
+        ask_priority: 6
+        options: [public, internal, confidential, personal_data, special_category_personal_data]
+      - id: data_volume
+        label: Data volume
+        type: text
+        weight: 1
+        ask_priority: 8
+      - id: data_quality_notes
+        label: Data quality / availability notes
+        type: longtext
+        weight: 1
+        ask_priority: 8
+
+  - id: systems
+    title: Systems & integration
+    fields:
+      - id: source_systems
+        label: Source systems
+        type: entity_list
+        entity_kind: system
+        weight: 2
+        ask_priority: 5
+        ai_hint: Systems the solution reads from (CRM, ERP, ticketing, DMS...). Use product names.
+      - id: target_systems
+        label: Target systems
+        type: entity_list
+        entity_kind: system
+        weight: 2
+        ask_priority: 6
+        ai_hint: Systems the solution writes to or is embedded in.
+      - id: integration_pattern
+        label: Integration pattern
+        type: text
+        weight: 1
+        ask_priority: 9
+
+  - id: value
+    title: Value
+    fields:
+      - id: value_drivers
+        label: Value drivers
+        type: multi_enum
+        required: true
+        weight: 2
+        ask_priority: 3
+        options: [cost_reduction, revenue_growth, risk_reduction, customer_experience, employee_experience, compliance, speed_time_to_market, quality]
+      - id: kpis
+        label: Success KPIs
+        type: list
+        required: true
+        weight: 3
+        ask_priority: 5
+        ai_hint: Measurable, with a baseline and a target when known (e.g. "Handling time 12 min -> 4 min").
+      - id: estimated_annual_value
+        label: Estimated annual value (EUR)
+        type: number
+        weight: 2
+        ask_priority: 7
+      - id: affected_population
+        label: Affected population (people)
+        type: number
+        weight: 1
+        ask_priority: 7
+      - id: urgency
+        label: Urgency
+        type: enum
+        required: true
+        weight: 1
+        ask_priority: 6
+        options: [low, medium, high, critical]
+
+  - id: feasibility
+    title: Feasibility
+    fields:
+      - id: data_readiness
+        label: Data readiness (1 = not available, 5 = clean & accessible)
+        type: number
+        min: 1
+        max: 5
+        weight: 2
+        ask_priority: 7
+      - id: technical_complexity
+        label: Technical complexity (1 = trivial, 5 = research-grade)
+        type: number
+        min: 1
+        max: 5
+        weight: 2
+        ask_priority: 7
+      - id: change_impact
+        label: Change management impact (1 = none, 5 = redefines jobs)
+        type: number
+        min: 1
+        max: 5
+        weight: 1
+        ask_priority: 8
+      - id: dependencies_notes
+        label: Known dependencies / prerequisites
+        type: longtext
+        weight: 2
+        ask_priority: 6
+        ai_hint: Other initiatives, platforms, data products or decisions this depends on.
+
+  - id: risk
+    title: Risk & compliance
+    fields:
+      - id: eu_ai_act_tier
+        label: EU AI Act risk tier
+        type: enum
+        weight: 2
+        ask_priority: 10
+        options: [prohibited, high_risk, limited_risk, minimal_risk, gpai_obligations_only]
+        ai_hint: Suggested by the AI from the use case content; must be validated by a reviewer.
+      - id: eu_ai_act_rationale
+        label: Risk tier rationale
+        type: longtext
+        weight: 1
+        ask_priority: 10
+      - id: risk_categories
+        label: Risk categories
+        type: multi_enum
+        weight: 2
+        ask_priority: 7
+        options: [bias_fairness, privacy, security, hallucination_accuracy, explainability, safety, intellectual_property, vendor_lock_in, model_drift]
+      - id: mitigations
+        label: Mitigations
+        type: list
+        weight: 1
+        ask_priority: 9
+
+  - id: delivery
+    title: Delivery
+    fields:
+      - id: build_approach
+        label: Build approach
+        type: enum
+        weight: 1
+        ask_priority: 8
+        options: [buy, build, partner, reuse_existing_platform, undecided]
+      - id: estimated_effort
+        label: Estimated effort
+        type: enum
+        weight: 1
+        ask_priority: 8
+        options: [S, M, L, XL]
+      - id: target_date
+        label: Target date
+        type: date
+        weight: 1
+        ask_priority: 9
+      - id: teams_involved
+        label: Teams involved
+        type: entity_list
+        entity_kind: team
+        weight: 2
+        ask_priority: 7
+      - id: models_considered
+        label: Models / platforms considered
+        type: entity_list
+        entity_kind: model
+        weight: 1
+        ask_priority: 9
+        ai_hint: e.g. "Azure OpenAI GPT-4o", "Claude", "internal LangGraph platform", "Mistral Large".
+
+# ---------------------------------------------------------------------------
+# Scoring: value and feasibility on 0-100, combined priority.
+# Each term: field, mapping (value -> points) or scale (min/max -> 0..1), weight.
+# ---------------------------------------------------------------------------
+scoring:
+  value:
+    - field: urgency
+      weight: 2
+      mapping: { low: 0.2, medium: 0.5, high: 0.8, critical: 1.0 }
+    - field: value_drivers
+      weight: 1
+      count_scale: { max: 4 }          # number of selected drivers / 4, capped at 1
+    - field: estimated_annual_value
+      weight: 3
+      log_scale: { min: 10000, max: 10000000 }
+    - field: affected_population
+      weight: 1
+      log_scale: { min: 10, max: 10000 }
+  feasibility:
+    - field: data_readiness
+      weight: 3
+      scale: { min: 1, max: 5 }
+    - field: technical_complexity
+      weight: 2
+      scale: { min: 1, max: 5 }
+      invert: true
+    - field: change_impact
+      weight: 1
+      scale: { min: 1, max: 5 }
+      invert: true
+    - field: human_in_the_loop
+      weight: 1
+      mapping: { none: 1.0, review_before_action: 0.9, exception_only: 0.6, full_autonomy: 0.3 }
+  priority:
+    value_weight: 0.6
+    feasibility_weight: 0.4
+
+# Minimum completeness (0..1) to allow submission, on top of required fields.
+submission_min_completeness: 0.5
+
+# Fields concatenated to build the embedding used for overlap detection.
+embedding_fields: [title, summary, problem_statement, solution_description, target_users, data_sources, source_systems, target_systems, kpis, business_unit]
