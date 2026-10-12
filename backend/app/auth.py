@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -10,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .db import get_session
-from .models import Role, User
+from sqlalchemy import select
+
+from .models import ApiKey, Role, User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -36,16 +40,41 @@ def create_token(user: User) -> str:
     return jwt.encode(payload, s.secret_key, algorithm="HS256")
 
 
-async def get_current_user(
-    token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)
-) -> User:
+API_KEY_PREFIX = "uch_"
+
+
+def hash_api_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def generate_api_key() -> str:
+    return API_KEY_PREFIX + secrets.token_urlsafe(32)
+
+
+async def resolve_token(session: AsyncSession, token: str) -> User | None:
+    """Accept either a session JWT or a personal API key (uch_...). Returns None when invalid."""
+    if token.startswith(API_KEY_PREFIX):
+        key = await session.scalar(select(ApiKey).where(ApiKey.key_hash == hash_api_key(token),
+                                                        ApiKey.revoked.is_(False)))
+        if not key or not key.user.is_active:
+            return None
+        key.last_used_at = datetime.now(timezone.utc)
+        await session.commit()
+        return key.user
     try:
         payload = jwt.decode(token, get_settings().secret_key, algorithms=["HS256"])
     except jwt.PyJWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+        return None
     user = await session.get(User, payload.get("sub"))
-    if not user or not user.is_active:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or inactive")
+    return user if user and user.is_active else None
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)
+) -> User:
+    user = await resolve_token(session, token)
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     return user
 
 

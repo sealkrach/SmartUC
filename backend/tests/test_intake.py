@@ -5,7 +5,7 @@ import pytest
 
 from app.services import llm
 
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 FULL = {
     "title": "Invoice triage", "summary": "Triage supplier invoices", "business_unit": "Finance",

@@ -3,10 +3,11 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import create_token, get_current_user, hash_password, require_role, verify_password
+from ..auth import (create_token, generate_api_key, get_current_user, hash_api_key, hash_password, require_role,
+                    verify_password)
 from ..db import get_session
-from ..models import Role, User
-from ..schemas import Token, UserCreate, UserOut, UserUpdate
+from ..models import ApiKey, Role, User
+from ..schemas import ApiKeyCreated, ApiKeyOut, Token, UserCreate, UserOut, UserUpdate
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["users"])
@@ -62,3 +63,34 @@ async def update_user(user_id: str, payload: UserUpdate, session: AsyncSession =
         user.password_hash = hash_password(payload.password)
     await session.commit()
     return user
+
+
+# ---------------------------------------------------------------- personal API keys (MCP / scripts)
+
+@users_router.get("/me/api-keys", response_model=list[ApiKeyOut])
+async def list_api_keys(session: AsyncSession = Depends(get_session), user: User = Depends(get_current_user)):
+    return (await session.scalars(select(ApiKey).where(ApiKey.user_id == user.id, ApiKey.revoked.is_(False))
+                                  .order_by(ApiKey.created_at.desc()))).all()
+
+
+@users_router.post("/me/api-keys", response_model=ApiKeyCreated, status_code=201)
+async def create_api_key(body: dict, session: AsyncSession = Depends(get_session),
+                         user: User = Depends(get_current_user)):
+    """Returns the plaintext key once; only its hash is stored."""
+    key = generate_api_key()
+    row = ApiKey(user_id=user.id, name=str(body.get("name") or "MCP client")[:100], prefix=key[:10],
+                 key_hash=hash_api_key(key))
+    session.add(row)
+    await session.commit()
+    return ApiKeyCreated(id=row.id, name=row.name, prefix=row.prefix, created_at=row.created_at,
+                         last_used_at=None, key=key)
+
+
+@users_router.delete("/me/api-keys/{key_id}", status_code=204)
+async def revoke_api_key(key_id: str, session: AsyncSession = Depends(get_session),
+                         user: User = Depends(get_current_user)):
+    row = await session.get(ApiKey, key_id)
+    if not row or row.user_id != user.id:
+        raise HTTPException(404, "API key not found")
+    row.revoked = True
+    await session.commit()

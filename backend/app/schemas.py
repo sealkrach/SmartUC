@@ -35,6 +35,20 @@ class UserUpdate(BaseModel):
     password: str | None = None
 
 
+class ApiKeyOut(BaseModel):
+    id: str
+    name: str
+    prefix: str
+    created_at: datetime
+    last_used_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class ApiKeyCreated(ApiKeyOut):
+    key: str  # plaintext, shown once
+
+
 class TemplateOut(BaseModel):
     id: str
     key: str

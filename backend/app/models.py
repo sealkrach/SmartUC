@@ -107,6 +107,23 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ApiKey(Base):
+    """Personal API keys for programmatic / MCP access. Only a SHA-256 hash is stored."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100), default="")
+    prefix: Mapped[str] = mapped_column(String(12))  # first chars, for display
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship(lazy="joined")
+
+
 class Template(Base):
     """A versioned use case template loaded from YAML (see app/templates)."""
 

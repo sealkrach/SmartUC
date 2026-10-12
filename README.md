@@ -66,6 +66,47 @@ cd backend && pytest
 
 ---
 
+## Interface MCP
+
+Le backend expose un serveur **MCP (Model Context Protocol)** sur `/mcp` (transport Streamable HTTP) : Claude
+Desktop, Claude Code, Cursor ou un agent LangGraph peuvent lire le registre, créer et faire avancer des use cases,
+mener un intake conversationnel, revoir les relations suggérées et lancer l'analyse de portefeuille — avec les
+mêmes règles de rôles que l'API REST.
+
+1. Dans l'UI, page **MCP & API** → *Create key* (clé personnelle `uch_…`, affichée une seule fois, hash stocké).
+2. Côté client :
+
+```bash
+# Claude Code
+claude mcp add --transport http usecase-hub http://localhost:3000/mcp \
+  --header "Authorization: Bearer uch_..."
+```
+
+```json
+// Claude Desktop (via mcp-remote)
+{ "mcpServers": { "usecase-hub": {
+  "command": "npx",
+  "args": ["-y", "mcp-remote", "http://localhost:3000/mcp", "--header", "Authorization:Bearer uch_..."] } } }
+```
+
+| Tools | Rôle |
+|---|---|
+| `list_use_cases`, `get_use_case`, `get_history`, `search_similar` | lecture du registre, recherche sémantique anti-doublon |
+| `normalize_text`, `create_use_case`, `update_use_case`, `improve_field` | texte libre → canvas, création, mise à jour |
+| `start_intake`, `continue_intake`, `convert_intake` | interview guidée pilotée depuis n'importe quel client |
+| `transition_use_case`, `suggest_risk`, `validate_risk` | workflow et tier EU AI Act |
+| `list_relations`, `review_relation`, `add_relation` | doublons, recoupements, dépendances |
+| `analyze_use_case`, `analyze_portfolio`, `portfolio_dashboard`, `list_entities` | intelligence de portefeuille |
+| `list_templates`, `get_template` | schéma des champs |
+
+Resources : `usecase://UC-0001`, `template://ai-usecase-canvas`. Prompts : `qualify_use_case`, `register_from_brief`.
+La clé API fonctionne aussi sur l'API REST (`Authorization: Bearer uch_…`).
+
+Implémentation : `backend/app/mcp_server.py` (protocole, auth) et `backend/app/mcp_tools.py` (fonctions qui
+réutilisent les endpoints FastAPI, donc mêmes permissions et validations).
+
+---
+
 ## Architecture
 
 ```
@@ -75,7 +116,9 @@ backend/app
 ├── models.py               SQLAlchemy : users, templates, use_cases, versions, decisions,
 │                           entities, use_case_entities, relations, intake_sessions, import_jobs, analysis_runs
 ├── auth.py                 JWT + bcrypt + rôles
-├── api/                    auth, templates, usecases, intake, portfolio, imports
+├── api/                    auth (+ clés API), templates, usecases, intake, portfolio, imports
+├── mcp_server.py           serveur MCP (Streamable HTTP sur /mcp, auth bearer, tools/resources/prompts)
+├── mcp_tools.py            implémentations des tools, réutilisent les endpoints
 ├── services/
 │   ├── templates.py        moteur de template : coercition, complétude, scoring, texte d'embedding
 │   ├── llm.py              LiteLLM (complete_json robuste) + embeddings (LiteLLM ou fallback "hash")
