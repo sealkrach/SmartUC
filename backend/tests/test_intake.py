@@ -41,7 +41,8 @@ def scripted_llm(monkeypatch):
         if "expert editor" in system:
             return {"value": "Manual invoice handling costs 12 minutes per invoice.", "notes": "Added the measurable pain."}
         if "senior AI portfolio architect" in system:  # judge
-            data = json.loads(user.split("CANDIDATES B:")[1])
+            raw = user.split("CANDIDATES B:")[1]
+            data = json.loads(raw[raw.index("[") : raw.rindex("]") + 1])
             return {"results": [{"id": c["id"], "type": "duplicate", "confidence": 0.9,
                                  "explanation": "Same AP invoice problem.", "suggested_action": "Merge."} for c in data[:1]]}
         raise AssertionError(f"unexpected prompt: {system[:80]}")

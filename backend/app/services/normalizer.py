@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 
 from . import llm
-from .templates import field_map, normalize_fields, schema_for_llm
+from ..config import get_settings
+from .templates import field_map, normalize_fields, redact_for_llm, schema_for_llm
 
 NORMALIZE_SYSTEM = """You are an AI portfolio analyst at a large regulated company.
 You turn unstructured descriptions of AI use cases into a normalized record that follows a template.
@@ -24,8 +25,9 @@ async def normalize_text(definition: dict, text: str, existing: dict | None = No
     schema = schema_for_llm(definition)
     user = f"TEMPLATE FIELDS:\n{schema}\n\n"
     if existing:
-        user += f"ALREADY KNOWN (keep unless contradicted):\n{json.dumps(existing, ensure_ascii=False)}\n\n"
-    user += f"INPUT TEXT:\n\"\"\"\n{text}\n\"\"\""
+        user += "ALREADY KNOWN (keep unless contradicted):\n" + llm.untrusted(
+            "known fields", json.dumps(redact_for_llm(definition, existing), ensure_ascii=False)) + "\n\n"
+    user += llm.untrusted("input text", text[:40000])
     result = await llm.complete_json(NORMALIZE_SYSTEM, user)
     fields = normalize_fields(definition, {**(existing or {}), **(result.get("fields") or {})})
     return {
@@ -46,14 +48,17 @@ async def improve_field(definition: dict, field_id: str, value, context: dict, i
     f = fm.get(field_id)
     if not f:
         raise ValueError(f"Unknown field {field_id}")
+    if f.get("read_only") or f.get("llm_exposable") is False:
+        raise ValueError(f"Field {field_id} cannot be sent to the AI")
+    ctx = redact_for_llm(definition, {k: context.get(k) for k in ("title", "summary", "problem_statement")})
     user = (
         f"FIELD: {field_id} ({f['type']}) — {f.get('label')}\n"
         f"GUIDANCE: {f.get('ai_hint', '')}\n"
-        f"CURRENT VALUE: {json.dumps(value, ensure_ascii=False)}\n"
-        f"USE CASE CONTEXT (title/summary/problem): {json.dumps({k: context.get(k) for k in ('title', 'summary', 'problem_statement')}, ensure_ascii=False)}\n"
+        "CURRENT VALUE: " + llm.untrusted("current value", json.dumps(value, ensure_ascii=False)) + "\n"
+        "USE CASE CONTEXT: " + llm.untrusted("context", json.dumps(ctx, ensure_ascii=False)) + "\n"
     )
     if instruction:
-        user += f"EXTRA INSTRUCTION FROM USER: {instruction}\n"
+        user += "USER INSTRUCTION: " + llm.untrusted("instruction", instruction[:1000]) + "\n"
     result = await llm.complete_json(IMPROVE_SYSTEM, user, fast=True)
     coerced = normalize_fields(definition, {field_id: result.get("value")}).get(field_id)
     return {"value": coerced if coerced is not None else value, "notes": result.get("notes", "")}
@@ -77,12 +82,16 @@ async def suggest_risk(definition: dict, fields: dict) -> dict:
     keep = {k: v for k, v in fields.items() if k in {
         "title", "summary", "problem_statement", "solution_description", "target_users", "ai_capability",
         "human_in_the_loop", "data_sources", "data_sensitivity", "business_unit", "interaction_mode"}}
-    result = await llm.complete_json(RISK_SYSTEM, json.dumps(keep, ensure_ascii=False), fast=True)
+    keep = redact_for_llm(definition, keep)
+    result = await llm.complete_json(RISK_SYSTEM, llm.untrusted("use case", json.dumps(keep, ensure_ascii=False)),
+                                     fast=True)
     fm = field_map(definition)
     tier = result.get("eu_ai_act_tier")
     if "eu_ai_act_tier" in fm and tier not in fm["eu_ai_act_tier"].get("options", []):
         tier = None
     return {
+        "model": get_settings().fast_model,
+        "prompt_version": "risk-v1",
         "risk_tier": tier,
         "risk_rationale": result.get("rationale", ""),
         "risk_categories": normalize_fields(definition, {"risk_categories": result.get("risk_categories")}).get("risk_categories", []),

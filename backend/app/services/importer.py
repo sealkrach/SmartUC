@@ -14,9 +14,22 @@ from ..models import ImportJob, Status, Template, User
 from . import analysis, llm
 from .normalizer import normalize_text
 from .templates import field_map, schema_for_llm
+from datetime import datetime, timezone
 from .usecases import create_use_case
 
 log = logging.getLogger(__name__)
+
+
+def is_orphaned(job: ImportJob) -> bool:
+    """A job still 'running' without a heartbeat for longer than the lease was interrupted (restart, crash)."""
+    from ..config import get_settings
+
+    last = job.heartbeat_at or job.started_at or job.created_at
+    if last is None:
+        return True
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - last).total_seconds() > get_settings().job_lease_seconds
 
 
 def read_table(path: Path) -> tuple[list[str], list[dict]]:
@@ -71,7 +84,7 @@ async def suggest_mapping(definition: dict, columns: list[str], sample_rows: lis
         try:
             user = (
                 f"TEMPLATE FIELDS:\n{schema_for_llm(definition)}\n\nCOLUMNS: {json.dumps(unresolved, ensure_ascii=False)}\n"
-                f"SAMPLE ROWS:\n{json.dumps(sample_rows[:3], ensure_ascii=False)[:6000]}"
+                "SAMPLE ROWS:\n" + llm.untrusted("sample rows", json.dumps(sample_rows[:3], ensure_ascii=False)[:6000])
             )
             result = await llm.complete_json(MAPPING_SYSTEM, user, fast=True)
             for col, fid in (result.get("mapping") or {}).items():
@@ -93,6 +106,8 @@ async def run_import(job_id: str) -> None:
         job.progress = 0
         job.errors = []
         job.created_ids = []
+        job.started_at = datetime.now(timezone.utc)
+        job.heartbeat_at = job.started_at
         await session.commit()
         try:
             _, rows = read_table(Path(job.stored_path))
@@ -105,6 +120,7 @@ async def run_import(job_id: str) -> None:
                 except Exception as e:  # keep going, report per row
                     job.errors = [*job.errors, {"row": i + 2, "error": str(e)[:300]}]
                 job.progress = int(100 * (i + 1) / total)
+                job.heartbeat_at = datetime.now(timezone.utc)
                 await session.commit()
             # structural + semantic analysis once everything is in
             await analysis.analyze_portfolio(session, use_llm=job.ai_enrich)
@@ -145,5 +161,8 @@ async def _import_row(session: AsyncSession, template: Template, user: User | No
             suggestions = {"warning": f"AI enrichment skipped: {e}"}
     if not fields.get("title"):
         fields["title"] = next((str(v) for v in row.values() if v), "Imported use case")[:120]
-    return await create_use_case(session, template, fields, user, status=Status.submitted.value,
+    # Imported records land as DRAFT (F-11): a human reviews the AI-normalised canvas against the original row
+    # (kept in ai_suggestions.import_row) before submitting it to the governance workflow.
+    suggestions["import_row"] = {str(k)[:100]: str(v)[:2000] for k, v in row.items() if v not in (None, "")}
+    return await create_use_case(session, template, fields, user, status=Status.draft.value,
                                  source="import", ai_suggestions=suggestions)

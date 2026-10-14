@@ -97,19 +97,20 @@ export function Canvas({ template, fields, editing, onChange, onImprove, highlig
               {s.fields.map((f) => {
                 const v = fields[f.id];
                 const missing = f.required && (v == null || v === "" || (Array.isArray(v) && v.length === 0));
-                const improvable = !!onImprove && ["text", "longtext", "list"].includes(f.type) && !!v;
+                const improvable = !!onImprove && ["text", "longtext", "list"].includes(f.type) && !!v && !f.read_only && f.llm_exposable !== false;
+                const editable = editing && !f.read_only;
                 return (
                   <div key={f.id} className={clsx("rounded-lg -mx-2 px-2 py-1.5", highlightMissing && missing && "bg-rose-50")}>
                     <dt className="flex items-center justify-between gap-2">
-                      <span className="label mb-0.5">{f.label}{f.required && <span className="text-rose-500"> *</span>}</span>
+                      <span className="label mb-0.5">{f.label}{f.required && <span className="text-rose-500"> *</span>}{f.read_only && <span className="ml-1 normal-case font-normal text-slate-400" title="Set only through reviewer validation">(validated by reviewer)</span>}{f.llm_exposable === false && <span className="ml-1 normal-case font-normal text-slate-400" title="Never sent to an AI provider">(not shared with AI)</span>}</span>
                       {improvable && (
                         <button className="btn-ghost p-1 text-indigo-600 hover:text-indigo-800" title="Improve with AI" onClick={() => improve(f.id)} disabled={busy === f.id}>
                           {busy === f.id ? <Spinner /> : <Sparkles className="h-3.5 w-3.5" />}
                         </button>
                       )}
                     </dt>
-                    <dd>{editing ? <FieldEditor field={f} value={v} onChange={(nv) => set(f.id, nv)} /> : <FieldValue field={f} value={v} />}</dd>
-                    {editing && f.ai_hint && <p className="text-[11px] text-slate-400 mt-1">{f.ai_hint}</p>}
+                    <dd>{editable ? <FieldEditor field={f} value={v} onChange={(nv) => set(f.id, nv)} /> : <FieldValue field={f} value={v} />}</dd>
+                    {editable && f.ai_hint && <p className="text-[11px] text-slate-400 mt-1">{f.ai_hint}</p>}
                   </div>
                 );
               })}

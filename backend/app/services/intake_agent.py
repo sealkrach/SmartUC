@@ -15,7 +15,8 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from . import llm
-from .templates import completeness, field_map, is_empty, iter_fields, normalize_fields, schema_for_llm
+from .templates import (completeness, field_map, is_empty, iter_fields, normalize_fields, redact_for_llm,
+                        schema_for_llm)
 
 READY_COMPLETENESS = 0.6
 QUESTIONS_PER_TURN = 3
@@ -65,7 +66,8 @@ edit any field, and click "Create use case". Plain text. Output JSON: {"message"
 
 
 def _transcript(messages: list[dict], limit: int = 30) -> str:
-    return "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages[-limit:])
+    lines = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages[-limit:])
+    return llm.untrusted("conversation", lines)
 
 
 def _missing_by_priority(definition: dict, draft: dict) -> list[str]:
@@ -83,7 +85,7 @@ async def node_extract(state: IntakeState) -> dict[str, Any]:
         return {}
     user = (
         f"TEMPLATE FIELDS:\n{schema_for_llm(definition)}\n\n"
-        f"CURRENT DRAFT:\n{json.dumps(state.get('draft') or {}, ensure_ascii=False)}\n\n"
+        f"CURRENT DRAFT:\n{json.dumps(redact_for_llm(definition, state.get('draft') or {}), ensure_ascii=False)}\n\n"
         f"CONVERSATION:\n{_transcript(state['messages'])}"
     )
     result = await llm.complete_json(EXTRACT_SYSTEM, user)
@@ -131,7 +133,7 @@ async def node_ask(state: IntakeState) -> dict[str, Any]:
             + ". Explain kindly that you need them before the use case can be created, and ask for them."
         )
     user = (
-        f"DRAFT SO FAR:\n{json.dumps(state.get('draft') or {}, ensure_ascii=False)}\n\n"
+        f"DRAFT SO FAR:\n{json.dumps(redact_for_llm(definition, state.get('draft') or {}), ensure_ascii=False)}\n\n"
         f"MISSING FIELDS TO ASK NOW (in order):\n{descr}\n{finish_note}\n\n"
         f"CONVERSATION:\n{_transcript(state['messages'], 12)}"
     )
@@ -141,9 +143,9 @@ async def node_ask(state: IntakeState) -> dict[str, Any]:
 
 async def node_wrap_up(state: IntakeState) -> dict[str, Any]:
     user = (
-        f"DRAFT:\n{json.dumps(state.get('draft') or {}, ensure_ascii=False)}\n\n"
+        f"DRAFT:\n{json.dumps(redact_for_llm(state['definition'], state.get('draft') or {}), ensure_ascii=False)}\n\n"
         f"ASSUMPTIONS:\n{json.dumps(state.get('assumptions') or [], ensure_ascii=False)}\n\n"
-        f"LAST USER MESSAGE: {state['messages'][-1]['content'] if state['messages'] else ''}"
+        "LAST USER MESSAGE: " + llm.untrusted("message", state['messages'][-1]['content'] if state['messages'] else '')
     )
     result = await llm.complete_json(WRAP_SYSTEM, user, fast=True)
     return {"reply": str(result.get("message") or "The draft looks complete — review it and create the use case.")}

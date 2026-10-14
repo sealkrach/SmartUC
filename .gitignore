@@ -9,3 +9,4 @@ uploads/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+frontend/tsconfig.tsbuildinfo

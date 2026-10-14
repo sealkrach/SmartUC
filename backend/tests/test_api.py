@@ -135,10 +135,10 @@ async def test_templates_and_users(client, admin_headers, requester_headers):
     r = await client.get(f"/api/templates/{tid}/yaml", headers=requester_headers)
     assert "sections:" in r.text
     r = await client.post("/api/users", headers=requester_headers,
-                          json={"email": "x@example.com", "password": "secret12"})
+                          json={"email": "x@example.com", "password": "Secret-Passw0rd-12"})
     assert r.status_code == 403
     r = await client.post("/api/users", headers=admin_headers,
-                          json={"email": "x@example.com", "password": "secret12", "role": "reviewer"})
+                          json={"email": "x@example.com", "password": "Secret-Passw0rd-12", "role": "reviewer"})
     assert r.status_code == 201
 
 
@@ -173,4 +173,4 @@ async def test_import_csv_without_llm(client, admin_headers, tmp_path, monkeypat
     assert len(j["created_ids"]) == 2 and j["errors"] == []
     r = await client.get(f"/api/usecases/{j['created_ids'][0]}", headers=admin_headers)
     assert r.json()["fields"]["source_systems"] == ["SharePoint", "Workday"]
-    assert r.json()["status"] == "submitted"
+    assert r.json()["status"] == "draft"  # imports land as draft for human review (F-11)

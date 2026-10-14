@@ -80,6 +80,9 @@ export default function UseCaseDetail() {
       </div>
 
       {error && <div className="mb-3"><Callout kind="warn">{error} <button className="underline ml-2" onClick={() => setError(null)}>dismiss</button></Callout></div>}
+      {u.risk_stale && (
+        <div className="mb-3"><Callout kind="warn">Risk-relevant fields changed since the EU AI Act tier was validated. A reviewer must re-validate before approval.</Callout></div>
+      )}
       {u.missing_required.length > 0 && (
         <div className="mb-3"><Callout kind="warn">Required fields missing: {u.missing_required.map((f) => humanize(f)).join(", ")}. The use case cannot be submitted yet.</Callout></div>
       )}
@@ -214,6 +217,7 @@ export function RelationRow({ r, selfId, onReview }: { r: Relation; selfId?: str
 
 function RelationsTab({ id }: { id: string }) {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const { data, isLoading } = useQuery({ queryKey: ["relations", id], queryFn: () => api.get<Relation[]>(`/usecases/${id}/relations`) });
   const review = useMutation({
     mutationFn: ({ rid, status, type }: { rid: string; status: string; type?: string }) => api.patch(`/usecases/relations/${rid}`, { status, type }),
@@ -226,7 +230,7 @@ function RelationsTab({ id }: { id: string }) {
   return (
     <div className="space-y-3">
       {semantic.length === 0 && <Empty title="No overlaps or dependencies detected">Run “Re-analyze” after editing, or add a relation manually from another use case.</Empty>}
-      {semantic.map((r) => <RelationRow key={r.id} r={r} selfId={id} onReview={(status, type) => review.mutate({ rid: r.id, status, type })} />)}
+      {semantic.map((r) => <RelationRow key={r.id} r={r} selfId={id} onReview={isReviewer(user) ? (status, type) => review.mutate({ rid: r.id, status, type }) : undefined} />)}
       {structural.length > 0 && (
         <div>
           <button className="btn-ghost text-xs" onClick={() => setShowStructural(!showStructural)}>{showStructural ? "Hide" : "Show"} {structural.length} shared-entity links</button>
@@ -264,7 +268,7 @@ function EntitiesTab({ id }: { id: string }) {
 
 function HistoryTab({ id }: { id: string }) {
   const decisions = useQuery({ queryKey: ["decisions", id], queryFn: () => api.get<Decision[]>(`/usecases/${id}/decisions`) });
-  const versions = useQuery({ queryKey: ["versions", id], queryFn: () => api.get<Version[]>(`/usecases/${id}/versions`) });
+  const versions = useQuery({ queryKey: ["versions", id], queryFn: () => api.get<Version[]>(`/usecases/${id}/versions`), retry: false });
   return (
     <div className="grid lg:grid-cols-2 gap-4">
       <div className="card p-4">
@@ -281,6 +285,7 @@ function HistoryTab({ id }: { id: string }) {
       </div>
       <div className="card p-4">
         <h3 className="text-sm font-semibold mb-3">Versions</h3>
+        {versions.isError && <p className="text-sm text-slate-400">Version history is visible to the owner and reviewers only.</p>}
         <ol className="space-y-2">
           {versions.data?.map((v) => (
             <li key={v.id} className="text-sm flex items-center justify-between">

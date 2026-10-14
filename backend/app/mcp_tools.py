@@ -15,11 +15,12 @@ from sqlalchemy import select
 
 from .api import intake as intake_api, portfolio as portfolio_api, templates as templates_api
 from .api import usecases as uc_api
+from .config import get_settings
 from .db import SessionLocal
 from .models import Template, UseCase, User
 from .schemas import (ImproveIn, IntakeMessage, IntakeStart, NormalizeIn, RelationCreate, RelationReview,
-                      TransitionIn, UseCaseCreate, UseCaseUpdate)
-from .services import analysis, llm
+                      RiskValidationIn, TransitionIn, UseCaseCreate, UseCaseUpdate)
+from .services import audit, llm
 from .services.templates import get_default_template, schema_for_llm
 
 
@@ -50,7 +51,7 @@ async def _run(user: User | None, coro_factory):
         except HTTPException as e:
             raise ToolError(f"{e.status_code}: {e.detail}") from e
         except llm.LLMUnavailable as e:
-            raise ToolError(f"503: {e}") from e
+            raise ToolError(f"503: {llm.public_message(e)}") from e
         # run what the API would have scheduled in the background (analysis), synchronously
         for task in bg.tasks:
             await task()
@@ -74,6 +75,7 @@ def _anon() -> User:
 # ---------------------------------------------------------------- registry
 
 async def list_use_cases(user: User, *, q=None, status=None, business_unit=None, risk_tier=None, limit=50):
+    limit = max(1, min(int(limit), uc_api.MAX_LIMIT))
     rows = await _run(user, lambda s, bg, user: uc_api.list_use_cases(session=s, _=user, q=q, status=status,
                                                           business_unit=business_unit, risk_tier=risk_tier,
                                                           capability=None, sort="updated_at", order="desc", limit=limit))
@@ -91,7 +93,9 @@ async def search_similar(user: User, text: str, limit: int = 5):
     async with SessionLocal() as session:
         [vec] = await llm.embed([text])
         ucs = (await session.scalars(select(UseCase).where(UseCase.embedding.is_not(None)))).all()
-        scored = sorted(((llm.cosine(vec, u.embedding), u) for u in ucs), key=lambda x: -x[0])[:limit]
+        model = get_settings().embedding_model
+        ucs = [u for u in ucs if u.deleted_at is None and u.embedding_model == model]
+        scored = sorted(((llm.cosine(vec, u.embedding), u) for u in ucs), key=lambda x: -x[0])[:max(1, min(limit, 50))]
         return [{"ref": u.ref, "id": u.id, "title": u.title, "status": u.status, "business_unit": u.business_unit,
                  "similarity": round(sim, 3), "summary": u.summary} for sim, u in scored]
 
@@ -127,7 +131,7 @@ async def get_history(user: User, ref: str):
     async def go(s, bg, user):
         return {"decisions": await uc_api.decisions(ref, session=s, _=user),
                 "versions": [{"version": v.version, "change_note": v.change_note, "created_at": v.created_at}
-                             for v in await uc_api.versions(ref, session=s, _=user)]}
+                             for v in await uc_api.versions(ref, session=s, user=user)]}
     return await _run(user, go)
 
 
@@ -142,18 +146,18 @@ async def normalize_text(user: User, text: str, *, template_key: str | None = No
 
 async def improve_field(user: User, ref: str, field_id: str, instruction: str = ""):
     return await _run(user, lambda s, bg, user: uc_api.ai_improve(ref, ImproveIn(field_id=field_id, instruction=instruction),
-                                                      session=s, _=user))
+                                                      session=s, user=user))
 
 
 async def suggest_risk(user: User, ref: str):
-    return await _run(user, lambda s, bg, user: uc_api.ai_risk(ref, session=s, _=user))
+    return await _run(user, lambda s, bg, user: uc_api.ai_risk(ref, session=s, user=user))
 
 
 async def validate_risk(user: User, ref: str, risk_tier: str, rationale: str = ""):
     if user.role not in ("reviewer", "admin"):
         raise ToolError("403: validating a risk tier requires the reviewer role")
-    return await _run(user, lambda s, bg, user: uc_api.validate_risk(ref, {"risk_tier": risk_tier, "rationale": rationale},
-                                                         session=s, user=user))
+    return await _run(user, lambda s, bg, user: uc_api.validate_risk(
+        ref, RiskValidationIn(risk_tier=risk_tier, rationale=rationale), session=s, user=user))
 
 
 # ---------------------------------------------------------------- intake
@@ -220,14 +224,25 @@ async def add_relation(user: User, source_ref: str, target_ref: str, type: str, 
 
 
 async def analyze_use_case(user: User, ref: str, use_llm: bool = True):
-    return await _run(user, lambda s, bg, user: uc_api.analyze(ref, session=s, _=user, use_llm=use_llm))
+    return await _run(user, lambda s, bg, user: uc_api.analyze(ref, session=s, user=user, use_llm=use_llm))
 
 
 async def analyze_portfolio(user: User, use_llm: bool = True):
+    """Asynchronous like the REST endpoint: returns a run id to poll with portfolio_dashboard / runs."""
+    import asyncio
+
     if user.role not in ("reviewer", "admin"):
         raise ToolError("403: portfolio analysis requires the reviewer role")
-    async with SessionLocal() as session:
-        return await analysis.analyze_portfolio(session, use_llm=use_llm)
+    tasks: list = []
+
+    def schedule(fn, *args):
+        tasks.append(asyncio.ensure_future(fn(*args)))
+
+    async def go(s, bg, user):
+        run = await portfolio_api.start_portfolio_analysis(s, user, use_llm, schedule)
+        return {"run_id": run.id, "status": run.status,
+                "note": "Running in the background; poll portfolio_dashboard.last_analysis for the result."}
+    return await _run(user, go)
 
 
 async def dashboard(user: User):

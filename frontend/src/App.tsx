@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
@@ -10,6 +10,8 @@ import Import from "./pages/Import";
 import Intake from "./pages/Intake";
 import Login from "./pages/Login";
 import McpApi from "./pages/McpApi";
+import Audit from "./pages/Audit";
+import Account from "./pages/Account";
 import NewUseCase from "./pages/NewUseCase";
 import Registry from "./pages/Registry";
 import RelationsInbox from "./pages/RelationsInbox";
@@ -20,8 +22,10 @@ const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 1
 
 function Protected() {
   const { user, loading } = useAuth();
+  const loc = useLocation();
   if (loading) return <div className="h-full grid place-items-center"><Spinner /></div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (user.must_change_password && loc.pathname !== "/account") return <Navigate to="/account" replace />;
   return <Outlet />;
 }
 
@@ -45,6 +49,8 @@ export default function App() {
                 <Route path="/import" element={<Import />} />
                 <Route path="/templates" element={<Templates />} />
                 <Route path="/mcp" element={<McpApi />} />
+                <Route path="/audit" element={<Audit />} />
+                <Route path="/account" element={<Account />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
