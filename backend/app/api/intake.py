@@ -6,12 +6,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import get_current_user
+from ..auth import check_ai_quota, get_current_user
 from ..config import get_settings
 from ..db import get_session
 from ..models import IntakeSession, Status, Template, User
 from ..schemas import IntakeDraftUpdate, IntakeMessage, IntakeOut, IntakeStart, NormalizeIn
-from ..services import intake_agent, llm, normalizer, usecases as svc
+from ..services import audit, intake_agent, llm, normalizer, usecases as svc
 from ..services.templates import completeness, get_default_template, normalize_fields
 
 router = APIRouter(prefix="/intake", tags=["intake"])
@@ -47,7 +47,9 @@ async def start(payload: IntakeStart, session: AsyncSession = Depends(get_sessio
     session.add(it)
     await session.flush()
     if payload.initial_text:
+        check_ai_quota(user)
         await _turn(it, template, payload.initial_text)
+    await audit.record(session, user, "intake.start", target_type="intake", target_id=it.id)
     await session.commit()
     return it
 
@@ -63,7 +65,7 @@ async def _turn(it: IntakeSession, template: Template, content: str) -> None:
     try:
         state = await intake_agent.run_turn(template.definition, it.messages, it.draft, it.assumptions)
     except llm.LLMUnavailable as e:
-        raise HTTPException(503, str(e))
+        raise HTTPException(503, llm.public_message(e))
     it.draft = state.get("draft") or it.draft
     it.assumptions = state.get("assumptions") or it.assumptions
     it.completeness = float(state.get("completeness") or 0)
@@ -78,6 +80,9 @@ async def send_message(intake_id: str, payload: IntakeMessage, session: AsyncSes
     it = await _own(session, intake_id, user)
     if it.phase == "converted":
         raise HTTPException(400, "This intake was already converted into a use case")
+    if len(it.messages) > 200:
+        raise HTTPException(400, "This intake is too long; convert it or start a new one")
+    check_ai_quota(user)
     template = await session.get(Template, it.template_id)
     await _turn(it, template, payload.content.strip())
     await session.commit()
@@ -111,13 +116,16 @@ async def convert(intake_id: str, bg: BackgroundTasks, session: AsyncSession = D
     _, missing = completeness(template.definition, it.draft)
     if submit and missing:
         raise HTTPException(400, f"Required fields missing: {', '.join(missing)}")
+    owner = await session.get(User, it.user_id) or user  # the requester who ran the intake owns the record
     uc = await svc.create_use_case(
-        session, template, it.draft, user,
+        session, template, it.draft, owner,
         status=Status.submitted.value if submit else Status.draft.value, source="intake",
         ai_suggestions={"assumptions": it.assumptions},
     )
     it.use_case_id = uc.id
     it.phase = "converted"
+    await audit.record(session, user, "usecase.create", target_type="usecase", target_id=uc.ref,
+                       details={"source": "intake", "intake_id": it.id, "submitted": submit, "owner": owner.id})
     await session.commit()
     if get_settings().auto_analyze_on_change:
         bg.add_task(svc.analyze_in_background, uc.id)
@@ -130,9 +138,10 @@ async def normalize(payload: NormalizeIn, session: AsyncSession = Depends(get_se
     """One-shot: paste a brief / email / slide text and get a normalized draft back."""
     template = await session.get(Template, payload.template_id) if payload.template_id else None
     template = template or await get_default_template(session)
+    check_ai_quota(_)
     try:
         result = await normalizer.normalize_text(template.definition, payload.text, payload.existing)
     except llm.LLMUnavailable as e:
-        raise HTTPException(503, str(e))
+        raise HTTPException(503, llm.public_message(e))
     score, missing = completeness(template.definition, result["fields"])
     return {**result, "completeness": score, "missing_required": missing, "template_id": template.id}

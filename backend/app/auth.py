@@ -2,21 +2,29 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .db import get_session
-from sqlalchemy import select
-
-from .models import ApiKey, Role, User
+from .models import ApiKey, RevokedToken, Role, User
+from .services.ratelimit import LoginGuard, SlidingWindow
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+_s = get_settings()
+login_guard = LoginGuard(_s.login_max_failures, _s.login_window_seconds, _s.login_lockout_seconds)
+ai_limiter = SlidingWindow(_s.ai_rate_limit_per_minute, 60)
+
+# bcrypt of a random string: used so that unknown accounts cost the same time as wrong passwords
+_DUMMY_HASH = bcrypt.hashpw(secrets.token_bytes(16), bcrypt.gensalt()).decode()
 
 
 def hash_password(password: str) -> str:
@@ -30,14 +38,33 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+def check_password_policy(password: str) -> None:
+    s = get_settings()
+    if len(password) < s.password_min_length:
+        raise HTTPException(400, f"Password must be at least {s.password_min_length} characters")
+    if password.lower() in {"password", "admin1234", "changeme", "usecasehub"} or password.isdigit():
+        raise HTTPException(400, "Password is too common")
+
+
 def create_token(user: User) -> str:
     s = get_settings()
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": user.id,
         "role": user.role,
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=s.access_token_expire_minutes),
+        "ver": user.token_version,
+        "jti": uuid.uuid4().hex,
+        "iat": now,
+        "exp": now + timedelta(minutes=s.access_token_expire_minutes),
     }
     return jwt.encode(payload, s.secret_key, algorithm="HS256")
+
+
+def decode_token(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, get_settings().secret_key, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        return None
 
 
 API_KEY_PREFIX = "uch_"
@@ -61,12 +88,23 @@ async def resolve_token(session: AsyncSession, token: str) -> User | None:
         key.last_used_at = datetime.now(timezone.utc)
         await session.commit()
         return key.user
-    try:
-        payload = jwt.decode(token, get_settings().secret_key, algorithms=["HS256"])
-    except jwt.PyJWTError:
+    payload = decode_token(token)
+    if not payload or not payload.get("jti"):
+        return None
+    if await session.get(RevokedToken, payload["jti"]):
         return None
     user = await session.get(User, payload.get("sub"))
-    return user if user and user.is_active else None
+    if not user or not user.is_active or user.token_version != payload.get("ver", -1):
+        return None
+    return user
+
+
+async def revoke_token(session: AsyncSession, token: str) -> None:
+    payload = decode_token(token)
+    if payload and payload.get("jti"):
+        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        if not await session.get(RevokedToken, payload["jti"]):
+            session.add(RevokedToken(jti=payload["jti"], user_id=payload.get("sub", ""), expires_at=exp))
 
 
 async def get_current_user(
@@ -81,6 +119,10 @@ async def get_current_user(
 ROLE_RANK = {Role.requester.value: 0, Role.reviewer.value: 1, Role.admin.value: 2}
 
 
+def is_reviewer(user: User) -> bool:
+    return ROLE_RANK.get(user.role, 0) >= ROLE_RANK[Role.reviewer.value]
+
+
 def require_role(minimum: Role):
     async def dep(user: User = Depends(get_current_user)) -> User:
         if ROLE_RANK.get(user.role, 0) < ROLE_RANK[minimum.value]:
@@ -91,4 +133,23 @@ def require_role(minimum: Role):
 
 
 def can_edit(user: User, owner_id: str | None) -> bool:
-    return user.role in (Role.admin.value, Role.reviewer.value) or user.id == owner_id
+    return is_reviewer(user) or user.id == owner_id
+
+
+def require_owner_or_reviewer(user: User, owner_id: str | None, what: str = "this use case") -> None:
+    if not can_edit(user, owner_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Only the owner or a reviewer can act on {what}")
+
+
+def check_ai_quota(user: User) -> None:
+    """Per-user quota on calls that trigger paid LLM work."""
+    if not ai_limiter.hit(user.id):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            f"AI quota exceeded: max {get_settings().ai_rate_limit_per_minute} AI calls per minute")
+
+
+def client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()[:64]
+    return (request.client.host if request.client else "")[:64]

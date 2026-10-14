@@ -45,11 +45,13 @@ sections:
         type: person
         weight: 1
         ask_priority: 9
+        llm_exposable: false   # personal data: never sent to an LLM provider
       - id: product_owner
         label: Product owner
         type: person
         weight: 1
         ask_priority: 9
+        llm_exposable: false
 
   - id: problem
     title: Problem
@@ -246,18 +248,19 @@ sections:
   - id: risk
     title: Risk & compliance
     fields:
+      # Governance fields: read_only = set ONLY through the reviewer validation endpoint, never from
+      # user edits, LLM output or imports. Displayed from the latest RiskValidation record.
       - id: eu_ai_act_tier
-        label: EU AI Act risk tier
+        label: EU AI Act risk tier (validated)
         type: enum
         weight: 2
-        ask_priority: 10
+        read_only: true
         options: [prohibited, high_risk, limited_risk, minimal_risk, gpai_obligations_only]
-        ai_hint: Suggested by the AI from the use case content; must be validated by a reviewer.
       - id: eu_ai_act_rationale
-        label: Risk tier rationale
+        label: Risk tier rationale (validated)
         type: longtext
         weight: 1
-        ask_priority: 10
+        read_only: true
       - id: risk_categories
         label: Risk categories
         type: multi_enum
@@ -340,6 +343,10 @@ scoring:
   priority:
     value_weight: 0.6
     feasibility_weight: 0.4
+
+# Changing any of these fields after a risk validation marks the validation as stale (re-validation needed).
+risk_relevant_fields: [ai_capability, solution_description, human_in_the_loop, target_users, data_sources,
+                       data_sensitivity, interaction_mode, business_unit, problem_statement]
 
 # Minimum completeness (0..1) to allow submission, on top of required fields.
 submission_min_completeness: 0.5

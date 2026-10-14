@@ -5,7 +5,9 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tempfile.mkdtemp()}/test.db"
 os.environ["SEED_DEMO_DATA"] = "true"
 os.environ["EMBEDDING_MODEL"] = "hash"
 os.environ["AUTO_ANALYZE_ON_CHANGE"] = "false"
-os.environ["SECRET_KEY"] = "test"
+os.environ["SECRET_KEY"] = "test-secret-key-that-is-long-enough-0123456789"
+os.environ["APP_ENV"] = "dev"
+os.environ["UPLOADS_DIR"] = tempfile.mkdtemp()
 
 import asyncio  # noqa: E402
 

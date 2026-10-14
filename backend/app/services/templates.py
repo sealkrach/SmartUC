@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,73 @@ from ..models import Template
 
 ENTITY_TYPES = {"entity_list"}
 LIST_TYPES = {"list", "multi_enum", "entity_list"}
+FIELD_TYPES = {"text", "longtext", "enum", "multi_enum", "list", "number", "date", "person", "entity_list"}
+ENTITY_KINDS = {"system", "data", "team", "model"}
+
+# Hard caps so free text cannot be used to stuff prompts or blow up storage (F-11)
+MAX_LEN = {"text": 300, "person": 200, "date": 40, "longtext": 6000, "list_item": 300, "list_items": 60}
+
+
+class TemplateValidationError(ValueError):
+    pass
+
+
+def validate_definition(d: dict) -> dict:
+    """Structural validation of a template definition (YAML on disk or admin upload). Raises on problems."""
+    if not isinstance(d, dict):
+        raise TemplateValidationError("definition must be a mapping")
+    key = d.get("key")
+    if not isinstance(key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,99}", key):
+        raise TemplateValidationError("key must be a lowercase slug (letters, digits, . _ -)")
+    if not isinstance(d.get("version", 1), int) or d.get("version", 1) < 1:
+        raise TemplateValidationError("version must be a positive integer")
+    sections = d.get("sections")
+    if not isinstance(sections, list) or not sections:
+        raise TemplateValidationError("sections must be a non-empty list")
+    seen: set[str] = set()
+    has_title = False
+    for si, sec in enumerate(sections):
+        if not isinstance(sec, dict) or not isinstance(sec.get("id"), str) or not isinstance(sec.get("fields"), list):
+            raise TemplateValidationError(f"section #{si} needs an 'id' and a 'fields' list")
+        for f in sec["fields"]:
+            if not isinstance(f, dict):
+                raise TemplateValidationError(f"section {sec['id']}: field entries must be mappings")
+            fid = f.get("id")
+            if not isinstance(fid, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,59}", fid):
+                raise TemplateValidationError(f"section {sec['id']}: invalid field id {fid!r}")
+            if fid in seen:
+                raise TemplateValidationError(f"duplicate field id {fid!r}")
+            seen.add(fid)
+            t = f.get("type")
+            if t not in FIELD_TYPES:
+                raise TemplateValidationError(f"field {fid}: unknown type {t!r}")
+            if t in ("enum", "multi_enum"):
+                opts = f.get("options")
+                if not isinstance(opts, list) or not opts or not all(isinstance(o, (str, int)) for o in opts):
+                    raise TemplateValidationError(f"field {fid}: enum fields need a non-empty 'options' list")
+            if t == "entity_list" and f.get("entity_kind", "system") not in ENTITY_KINDS:
+                raise TemplateValidationError(f"field {fid}: entity_kind must be one of {sorted(ENTITY_KINDS)}")
+            for num in ("weight", "min", "max", "ask_priority"):
+                if num in f and not isinstance(f[num], (int, float)):
+                    raise TemplateValidationError(f"field {fid}: {num} must be numeric")
+            for flag in ("required", "read_only", "llm_exposable"):
+                if flag in f and not isinstance(f[flag], bool):
+                    raise TemplateValidationError(f"field {fid}: {flag} must be a boolean")
+            if fid == "title":
+                has_title = True
+    if not has_title:
+        raise TemplateValidationError("a 'title' field is required")
+    for axis in ("value", "feasibility"):
+        for term in (d.get("scoring") or {}).get(axis, []) or []:
+            if not isinstance(term, dict) or term.get("field") not in seen:
+                raise TemplateValidationError(f"scoring.{axis}: each term needs a 'field' that exists")
+    for fid in d.get("embedding_fields", []) or []:
+        if fid not in seen:
+            raise TemplateValidationError(f"embedding_fields references unknown field {fid!r}")
+    mc = d.get("submission_min_completeness", 0)
+    if not isinstance(mc, (int, float)) or not 0 <= mc <= 1:
+        raise TemplateValidationError("submission_min_completeness must be between 0 and 1")
+    return d
 
 
 def iter_fields(definition: dict) -> list[dict]:
@@ -26,6 +94,21 @@ def iter_fields(definition: dict) -> list[dict]:
 
 def field_map(definition: dict) -> dict[str, dict]:
     return {f["id"]: f for f in iter_fields(definition)}
+
+
+def governance_fields(definition: dict) -> set[str]:
+    """Fields that are never set from user input, LLM output or imports (e.g. the validated EU AI Act tier)."""
+    return {f["id"] for f in iter_fields(definition) if f.get("read_only")}
+
+
+def llm_hidden_fields(definition: dict) -> set[str]:
+    """Fields excluded from every prompt (personal data such as sponsor / product owner names)."""
+    return {f["id"] for f in iter_fields(definition) if f.get("llm_exposable") is False}
+
+
+def redact_for_llm(definition: dict, fields: dict) -> dict:
+    hidden = llm_hidden_fields(definition)
+    return {k: v for k, v in (fields or {}).items() if k not in hidden}
 
 
 def is_empty(value: Any) -> bool:
@@ -49,7 +132,7 @@ def coerce_value(field: dict, value: Any) -> Any:
             value = [p for p in parts if p]
         elif not isinstance(value, list):
             value = [str(value)]
-        value = [str(v).strip() for v in value if not is_empty(v)]
+        value = [str(v).strip()[: MAX_LEN["list_item"]] for v in value if not is_empty(v)][: MAX_LEN["list_items"]]
         if t == "multi_enum":
             opts = set(field.get("options", []))
             norm = []
@@ -85,16 +168,18 @@ def coerce_value(field: dict, value: Any) -> Any:
             num = min(float(field["max"]), num)
         return int(num) if num.is_integer() else num
     if t in {"text", "longtext", "person", "date"}:
-        return str(value).strip()
+        return str(value).strip()[: MAX_LEN[t]]
     return value
 
 
-def normalize_fields(definition: dict, raw: dict) -> dict:
-    """Keep only known fields, coerce types, drop empties."""
+def normalize_fields(definition: dict, raw: dict, *, allow_governance: bool = False) -> dict:
+    """Keep only known fields, coerce types, drop empties. Governance (read_only) fields are dropped unless
+    the caller is the governance code path itself."""
     fm = field_map(definition)
+    gov = governance_fields(definition)
     out: dict[str, Any] = {}
     for fid, value in (raw or {}).items():
-        if fid not in fm:
+        if fid not in fm or (fid in gov and not allow_governance):
             continue
         coerced = coerce_value(fm[fid], value)
         if coerced is not None:
@@ -197,8 +282,9 @@ def entity_fields(definition: dict) -> list[dict]:
 def schema_for_llm(definition: dict, only: list[str] | None = None) -> str:
     """Compact, LLM-friendly description of the fields."""
     lines = []
+    hidden = governance_fields(definition) | llm_hidden_fields(definition)
     for f in iter_fields(definition):
-        if only and f["id"] not in only:
+        if (only and f["id"] not in only) or f["id"] in hidden:
             continue
         spec = f"- {f['id']} ({f['type']}"
         if f.get("options"):
@@ -230,7 +316,7 @@ def load_yaml_templates(directory: Path | None = None) -> list[dict]:
         if d and "key" in d and "sections" in d:
             d.setdefault("version", 1)
             d.setdefault("name", d["key"])
-            defs.append(d)
+            defs.append(validate_definition(d))
     return defs
 
 

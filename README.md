@@ -18,18 +18,20 @@ Typeform conversationnel (intake assisté).
 
 ```bash
 cp .env.example .env
-# Renseigne LLM_MODEL + la clé du fournisseur (ANTHROPIC_API_KEY, OPENAI_API_KEY, OLLAMA_API_BASE…)
+# Obligatoire : SECRET_KEY (openssl rand -hex 32), POSTGRES_PASSWORD, ADMIN_PASSWORD (12+ caractères)
+# + LLM_MODEL et la clé du fournisseur (ANTHROPIC_API_KEY, OPENAI_API_KEY, OLLAMA_API_BASE…)
+# Le backend refuse de démarrer avec des secrets faibles ou par défaut, sauf APP_ENV=dev.
 docker compose up --build
 ```
 
 - Frontend : http://localhost:3000
 - API + Swagger : http://localhost:8000/docs
-- Comptes de démo : `admin@example.com / admin1234` (admin), `marie.dupont@example.com / demo1234` (reviewer),
-  `karim.benali@example.com / demo1234` (requester)
+- Premier compte : `ADMIN_EMAIL` / `ADMIN_PASSWORD` du `.env` (changement de mot de passe forcé au premier login).
 
-Au premier démarrage, 26 use cases de démo (banque/assurance, doublons et dépendances volontaires) sont
-chargés et analysés **sans LLM** (entités partagées + similarité lexicale). Avec une clé LLM, clique
-**Analyze portfolio** sur le dashboard pour obtenir les relations jugées par le LLM.
+**Mode démo** (poste de travail uniquement) : `APP_ENV=dev` et `SEED_DEMO_DATA=true` chargent 26 use cases
+(banque/assurance, doublons et dépendances volontaires) analysés **sans LLM**, plus les comptes
+`marie.dupont@example.com` (reviewer) et `karim.benali@example.com` (requester), mot de passe `demo1234`.
+Avec une clé LLM, clique **Analyze portfolio** pour obtenir les relations jugées par le LLM.
 
 ### Sans Docker (dev)
 
@@ -152,6 +154,38 @@ porte l'état, plus un volume `uploads` pour les fichiers d'import. Le frontend 
 vers le service `backend:8000`. Variables sensibles : `SECRET_KEY`, clés LLM, `ADMIN_PASSWORD`.
 
 ---
+
+## Sécurité & conformité
+
+Revue indépendante du 14/10/2026 : `docs/security-compliance-review-2026-10-14.md`. Les constats Critiques et
+High (vague 1) sont corrigés ; contrôles en place :
+
+- **Tier EU AI Act = enregistrement de gouvernance** (`risk_validations`, append-only) : jamais modifiable par un
+  requester, le LLM ou un import ; validation par un reviewer ≠ owner (quatre yeux) ; invalidée automatiquement
+  si un champ à risque change (`risk_stale`) ; `prohibited` n'est jamais approuvable.
+- **Démarrage fail-fast** sans `SECRET_KEY` fort, mot de passe admin/DB fort ; seed démo seulement en `APP_ENV=dev`.
+- **Authentification** : verrouillage après 5 échecs (compte + IP), comparaison en temps constant, mots de passe
+  12+ caractères, JWT 60 min avec `jti` révocable (`/api/auth/logout`), invalidation de toutes les sessions au
+  changement de mot de passe ou de rôle, changement forcé au premier login.
+- **Autorisations** : revue de relations / ajout / analyse / suggestion IA = reviewer ou owner ; jobs d'import,
+  annuaire et historique des versions restreints ; l'intake converti appartient au demandeur.
+- **Audit append-only** (`audit_events` + JSON lines `usecasehub.audit`) : auth, utilisateurs, clés API, use cases,
+  transitions, validations de risque, relations, imports, templates, appels MCP ; `X-Request-Id` corrélé ;
+  suppression logique des use cases (décisions et versions conservées) ; endpoint `/api/audit` (reviewer+).
+- **LLM** : timeout + retries bornés, quota par utilisateur (`AI_RATE_LIMIT_PER_MINUTE`), allowlist de
+  fournisseurs (`LLM_ALLOWED_PROVIDERS`), champs `llm_exposable: false` jamais envoyés (sponsor, product owner),
+  contenu utilisateur encadré comme donnée non fiable (anti prompt-injection), sorties LLM filtrées (champs de
+  gouvernance exclus, longueurs bornées), journal d'egress sans contenu, modèle/prompt-version tracés sur les
+  suggestions, pas de fallback silencieux d'embeddings (provenance `embedding_model` par fiche).
+- **Imports** atterrissent en `draft` avec la ligne d'origine conservée pour revue humaine ; taille et type vérifiés.
+- **Jobs** : détection des jobs orphelins au redémarrage et bail (`JOB_LEASE_SECONDS`).
+- **Entrées** : schéma de template validé, `sort` whitelisté, `limit` borné, handler d'erreur global sans fuite
+  de détails fournisseur, `/docs` désactivé hors dev, `/api/health` sans configuration.
+- **Edge** : DB et backend non publiés sur l'hôte, headers de sécurité (CSP, nosniff, frame-ancestors…),
+  conteneur backend non-root, aucune ressource tierce (polices) chargée par le front.
+
+Reste pour la production (vague 2) : SSO OIDC, file de jobs durable, migrations Alembic, DPIA et registre
+Art. 30, pseudonymisation des champs à l'egress, images épinglées + SBOM, pgvector HNSW.
 
 ## Feuille de route suggérée
 

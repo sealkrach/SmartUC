@@ -8,7 +8,8 @@ from ..auth import get_current_user, require_role
 from ..db import get_session
 from ..models import Role, Template, User
 from ..schemas import TemplateOut
-from ..services.templates import sync_templates
+from ..services import audit
+from ..services.templates import TemplateValidationError, sync_templates, validate_definition
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
@@ -37,17 +38,25 @@ async def template_yaml(template_id: str, session: AsyncSession = Depends(get_se
 
 
 @router.post("/sync", response_model=list[TemplateOut])
-async def sync(session: AsyncSession = Depends(get_session), _: User = Depends(require_role(Role.admin))):
+async def sync(session: AsyncSession = Depends(get_session), admin: User = Depends(require_role(Role.admin))):
     """Reload YAML templates from disk (new versions are added, same versions updated)."""
-    return await sync_templates(session)
+    try:
+        out = await sync_templates(session)
+    except TemplateValidationError as e:
+        raise HTTPException(400, f"Invalid template on disk: {e}")
+    await audit.record(session, admin, "template.sync", details={"count": len(out)})
+    await session.commit()
+    return out
 
 
 @router.post("", response_model=TemplateOut, status_code=201)
 async def upload_template(body: dict, session: AsyncSession = Depends(get_session),
-                          _: User = Depends(require_role(Role.admin))):
+                          admin: User = Depends(require_role(Role.admin))):
     """Register a template from a parsed YAML/JSON definition (key, version, sections...)."""
-    if not body.get("key") or not body.get("sections"):
-        raise HTTPException(400, "Definition needs at least 'key' and 'sections'")
+    try:
+        body = validate_definition(body)
+    except TemplateValidationError as e:
+        raise HTTPException(400, f"Invalid template definition: {e}")
     version = int(body.get("version", 1))
     if await session.scalar(select(Template).where(Template.key == body["key"], Template.version == version)):
         raise HTTPException(409, "This key/version already exists; bump the version")
@@ -58,18 +67,22 @@ async def upload_template(body: dict, session: AsyncSession = Depends(get_sessio
     t = Template(key=body["key"], version=version, name=body.get("name", body["key"]),
                  description=body.get("description", ""), is_default=make_default, definition=body)
     session.add(t)
+    await session.flush()
+    await audit.record(session, admin, "template.upload", target_type="template", target_id=t.id,
+                       details={"key": t.key, "version": t.version, "is_default": make_default})
     await session.commit()
     return t
 
 
 @router.post("/{template_id}/default", response_model=TemplateOut)
 async def set_default(template_id: str, session: AsyncSession = Depends(get_session),
-                      _: User = Depends(require_role(Role.admin))):
+                      admin: User = Depends(require_role(Role.admin))):
     t = await session.get(Template, template_id)
     if not t:
         raise HTTPException(404, "Template not found")
     for other in (await session.scalars(select(Template).where(Template.is_default.is_(True)))).all():
         other.is_default = False
     t.is_default = True
+    await audit.record(session, admin, "template.set_default", target_type="template", target_id=t.id)
     await session.commit()
     return t

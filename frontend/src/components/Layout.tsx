@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Boxes, FileInput, GitFork, LayoutDashboard, Library, LogOut, MessageSquarePlus, Network, Plug, Users } from "lucide-react";
+import { Boxes, FileInput, GitFork, LayoutDashboard, Library, LogOut, MessageSquarePlus, Network, Plug, ScrollText, UserCog, Users } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -14,6 +14,8 @@ const NAV = [
   { to: "/import", label: "Import", icon: FileInput, reviewer: true },
   { to: "/templates", label: "Templates", icon: Library },
   { to: "/mcp", label: "MCP & API", icon: Plug },
+  { to: "/audit", label: "Audit trail", icon: ScrollText, reviewer: true },
+  { to: "/account", label: "My account", icon: UserCog },
   { to: "/admin", label: "Users", icon: Users, admin: true },
 ];
 

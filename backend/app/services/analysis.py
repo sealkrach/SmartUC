@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import get_settings
 from ..models import Entity, Relation, RelationStatus, RelationType, UseCase, UseCaseEntity
 from . import llm
-from .templates import embedding_text, entity_fields
+from .templates import embedding_text, entity_fields, redact_for_llm
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +75,9 @@ async def structural_relations(session: AsyncSession, uc: UseCase) -> int:
         return 0
     others = (
         await session.scalars(
-            select(UseCaseEntity).where(UseCaseEntity.entity_id.in_(my_entities), UseCaseEntity.use_case_id != uc.id)
+            select(UseCaseEntity).join(UseCase, UseCase.id == UseCaseEntity.use_case_id)
+            .where(UseCaseEntity.entity_id.in_(my_entities), UseCaseEntity.use_case_id != uc.id,
+                   UseCase.deleted_at.is_(None))
         )
     ).all()
     # Remove stale structural relations for this UC, then re-create
@@ -118,13 +120,22 @@ async def structural_relations(session: AsyncSession, uc: UseCase) -> int:
 # ---------------------------------------------------------------------------
 
 async def ensure_embedding(session: AsyncSession, uc: UseCase) -> bool:
-    text = embedding_text(uc.template.definition, uc.fields, uc.title, uc.summary)
+    """(Re)compute the embedding when the text or the configured model changed. Provenance is stored in
+    `embedding_model`; a provider failure keeps the previous vector and logs (no silent hash fallback)."""
+    model = get_settings().embedding_model
+    text = embedding_text(uc.template.definition, redact_for_llm(uc.template.definition, uc.fields), uc.title,
+                          uc.summary)
     h = llm.text_hash(text)
-    if uc.embedding is not None and uc.embedding_text_hash == h:
+    if uc.embedding is not None and uc.embedding_text_hash == h and uc.embedding_model == model:
         return False
-    vectors = await llm.embed([text or uc.title])
+    try:
+        vectors = await llm.embed([text or uc.title])
+    except llm.EmbeddingError as e:
+        log.error("Keeping previous embedding for %s: %s", uc.ref, e)
+        return False
     uc.embedding = vectors[0]
     uc.embedding_text_hash = h
+    uc.embedding_model = model
     await session.flush()
     return True
 
@@ -134,7 +145,9 @@ async def semantic_candidates(session: AsyncSession, uc: UseCase) -> list[tuple[
     if uc.embedding is None:
         return []
     others = (
-        await session.scalars(select(UseCase).where(UseCase.id != uc.id, UseCase.embedding.is_not(None)))
+        await session.scalars(select(UseCase).where(UseCase.id != uc.id, UseCase.embedding.is_not(None),
+                                                    UseCase.deleted_at.is_(None),
+                                                    UseCase.embedding_model == uc.embedding_model))
     ).all()
     scored = [(o, llm.cosine(uc.embedding, o.embedding)) for o in others]
     scored = [(o, sim) for o, sim in scored if sim >= s.candidate_threshold]
@@ -177,8 +190,8 @@ async def judge_pairs(uc: UseCase, candidates: list[tuple[UseCase, float]]) -> l
     if not candidates:
         return []
     user = (
-        f"USE CASE A:\n{json.dumps(_brief(uc), ensure_ascii=False)}\n\n"
-        f"CANDIDATES B:\n{json.dumps([_brief(c) for c, _ in candidates], ensure_ascii=False)}"
+        "USE CASE A:\n" + llm.untrusted("use case A", json.dumps(_brief(uc), ensure_ascii=False)) + "\n\n"
+        "CANDIDATES B:\n" + llm.untrusted("candidates", json.dumps([_brief(c) for c, _ in candidates], ensure_ascii=False))
     )
     result = await llm.complete_json(JUDGE_SYSTEM, user, max_tokens=3000)
     valid = {t.value for t in RelationType} | {"none"}
@@ -276,7 +289,7 @@ async def analyze_use_case(session: AsyncSession, uc: UseCase, use_llm: bool = T
 
 
 async def analyze_portfolio(session: AsyncSession, use_llm: bool = True) -> dict:
-    ucs = (await session.scalars(select(UseCase))).all()
+    ucs = (await session.scalars(select(UseCase).where(UseCase.deleted_at.is_(None)))).all()
     totals = {"use_cases": len(ucs), "structural_relations": 0, "created": 0, "candidates": 0}
     for uc in ucs:
         await ensure_embedding(session, uc)

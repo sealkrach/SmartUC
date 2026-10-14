@@ -104,7 +104,40 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default=Role.requester.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0)  # bump to invalidate every JWT
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    anonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RevokedToken(Base):
+    """JWT ids revoked before expiry (logout). Rows can be purged once `expires_at` has passed."""
+
+    __tablename__ = "revoked_tokens"
+
+    jti: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuditEvent(Base):
+    """Append-only audit trail. Never updated or deleted by the application."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    actor_email: Mapped[str] = mapped_column(String(255), default="")
+    channel: Mapped[str] = mapped_column(String(20), default="api")  # api | mcp | system
+    action: Mapped[str] = mapped_column(String(60), index=True)       # e.g. usecase.transition
+    target_type: Mapped[str] = mapped_column(String(40), default="")
+    target_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    client_ip: Mapped[str] = mapped_column(String(64), default="")
+    request_id: Mapped[str] = mapped_column(String(32), default="")
+    outcome: Mapped[str] = mapped_column(String(20), default="success")
 
 
 class ApiKey(Base):
@@ -168,6 +201,11 @@ class UseCase(Base):
 
     embedding: Mapped[list | None] = mapped_column(EmbeddingType, nullable=True)
     embedding_text_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)  # provenance
+    risk_fields_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # hash at validation time
+    risk_stale: Mapped[bool] = mapped_column(Boolean, default=False)  # risk-relevant fields changed since
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -183,12 +221,33 @@ class UseCaseVersion(Base):
     __tablename__ = "use_case_versions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
-    use_case_id: Mapped[str] = mapped_column(ForeignKey("use_cases.id", ondelete="CASCADE"), index=True)
+    use_case_id: Mapped[str] = mapped_column(ForeignKey("use_cases.id"), index=True)
     version: Mapped[int] = mapped_column(Integer)
     fields: Mapped[dict] = mapped_column(JSON)
     changed_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     change_note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RiskValidation(Base):
+    """A reviewer's validation of the EU AI Act tier — the only source of `UseCase.risk_tier`.
+
+    Append-only: a new validation supersedes the previous one; nothing is edited in place.
+    """
+
+    __tablename__ = "risk_validations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    use_case_id: Mapped[str] = mapped_column(ForeignKey("use_cases.id"), index=True)
+    tier: Mapped[str] = mapped_column(String(30))
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    validated_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    ai_suggestion: Mapped[dict] = mapped_column(JSON, default=dict)   # snapshot of what the AI proposed
+    fields_hash: Mapped[str] = mapped_column(String(64))              # risk-relevant fields at validation time
+    template_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    validated_by: Mapped[User] = relationship(lazy="joined")
 
 
 class Decision(Base):
@@ -197,7 +256,7 @@ class Decision(Base):
     __tablename__ = "decisions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
-    use_case_id: Mapped[str] = mapped_column(ForeignKey("use_cases.id", ondelete="CASCADE"), index=True)
+    use_case_id: Mapped[str] = mapped_column(ForeignKey("use_cases.id"), index=True)
     from_status: Mapped[str] = mapped_column(String(30))
     to_status: Mapped[str] = mapped_column(String(30))
     comment: Mapped[str] = mapped_column(Text, default="")
@@ -250,6 +309,8 @@ class Relation(Base):
     entity_id: Mapped[str | None] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"), nullable=True)
     origin: Mapped[str] = mapped_column(String(20), default="ai")  # ai | human | structural
     reviewed_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_history: Mapped[list] = mapped_column(JSON, default=list)  # [{status, type, by, at}]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -290,6 +351,8 @@ class ImportJob(Base):
     ai_enrich: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(20), default="uploaded")  # uploaded|mapped|running|done|failed
     progress: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_ids: Mapped[list] = mapped_column(JSON, default=list)
     errors: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -304,5 +367,7 @@ class AnalysisRun(Base):
     status: Mapped[str] = mapped_column(String(20), default="running")
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
     error: Mapped[str] = mapped_column(Text, default="")
+    requested_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

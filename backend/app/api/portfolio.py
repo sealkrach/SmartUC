@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+
+from ..config import get_settings
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,14 +13,14 @@ from ..auth import get_current_user, require_role
 from ..db import SessionLocal, get_session
 from ..models import AnalysisRun, Entity, Relation, RelationStatus, Role, UseCase, UseCaseEntity, User
 from ..schemas import GraphOut, RelationOut
-from ..services import analysis
+from ..services import analysis, audit, llm
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
 @router.get("/dashboard")
 async def dashboard(session: AsyncSession = Depends(get_session), _: User = Depends(get_current_user)):
-    ucs = (await session.scalars(select(UseCase))).all()
+    ucs = (await session.scalars(select(UseCase).where(UseCase.deleted_at.is_(None)))).all()
     by = lambda key: _count(ucs, key)  # noqa: E731
     suggested = await session.scalar(select(func.count()).select_from(Relation)
                                      .where(Relation.status == RelationStatus.suggested.value))
@@ -83,7 +85,7 @@ async def relation_inbox(session: AsyncSession = Depends(get_session), _: User =
 @router.get("/graph", response_model=GraphOut)
 async def graph(session: AsyncSession = Depends(get_session), _: User = Depends(get_current_user),
                 include_entities: bool = True, include_suggested: bool = True, min_shared: int = 2):
-    ucs = (await session.scalars(select(UseCase))).all()
+    ucs = (await session.scalars(select(UseCase).where(UseCase.deleted_at.is_(None)))).all()
     nodes = [{"id": u.id, "kind": "usecase", "ref": u.ref, "label": u.title, "status": u.status,
               "risk_tier": u.risk_tier, "business_unit": u.business_unit, "priority": u.priority_score,
               "capability": (u.fields or {}).get("ai_capability")} for u in ucs]
@@ -125,22 +127,49 @@ async def _run_portfolio(run_id: str, use_llm: bool) -> None:
             run.stats = stats
             run.status = "done"
         except Exception as e:
+            await session.rollback()
+            run = await session.get(AnalysisRun, run_id)
             run.status = "failed"
-            run.error = str(e)[:1000]
+            run.error = "analysis failed; see server logs"
+            import logging
+            logging.getLogger(__name__).exception("Portfolio analysis %s failed: %s", run_id, e)
         run.finished_at = datetime.now(timezone.utc)
         await session.commit()
 
 
-@router.post("/analyze")
-async def analyze_all(bg: BackgroundTasks, session: AsyncSession = Depends(get_session),
-                      _: User = Depends(require_role(Role.reviewer)), use_llm: bool = True):
+def _is_orphaned(run: AnalysisRun) -> bool:
+    last = run.heartbeat_at or run.started_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - last).total_seconds() > get_settings().job_lease_seconds
+
+
+async def start_portfolio_analysis(session: AsyncSession, user: User, use_llm: bool,
+                                   schedule) -> AnalysisRun:
+    """Shared by REST and MCP. `schedule(coro_fn, *args)` runs the job after commit."""
     running = await session.scalar(select(AnalysisRun).where(AnalysisRun.status == "running"))
     if running:
-        raise HTTPException(409, "An analysis is already running")
-    run = AnalysisRun(scope="portfolio", status="running", stats={})
+        if _is_orphaned(running):
+            running.status = "failed"
+            running.error = "interrupted (lease expired)"
+            running.finished_at = datetime.now(timezone.utc)
+        else:
+            raise HTTPException(409, "An analysis is already running")
+    run = AnalysisRun(scope="portfolio", status="running", stats={}, requested_by_id=user.id,
+                      heartbeat_at=datetime.now(timezone.utc))
     session.add(run)
+    await session.flush()
+    await audit.record(session, user, "analysis.portfolio", target_type="analysis_run", target_id=run.id,
+                       details={"use_llm": use_llm})
     await session.commit()
-    bg.add_task(_run_portfolio, run.id, use_llm)
+    schedule(_run_portfolio, run.id, use_llm)
+    return run
+
+
+@router.post("/analyze")
+async def analyze_all(bg: BackgroundTasks, session: AsyncSession = Depends(get_session),
+                      user: User = Depends(require_role(Role.reviewer)), use_llm: bool = True):
+    run = await start_portfolio_analysis(session, user, use_llm, bg.add_task)
     return {"run_id": run.id, "status": "running"}
 
 
@@ -148,7 +177,7 @@ async def analyze_all(bg: BackgroundTasks, session: AsyncSession = Depends(get_s
 async def runs(session: AsyncSession = Depends(get_session), _: User = Depends(get_current_user)):
     rs = (await session.scalars(select(AnalysisRun).order_by(AnalysisRun.started_at.desc()).limit(20))).all()
     return [{"id": r.id, "scope": r.scope, "status": r.status, "stats": r.stats, "error": r.error,
-             "started_at": r.started_at, "finished_at": r.finished_at} for r in rs]
+             "requested_by_id": r.requested_by_id, "started_at": r.started_at, "finished_at": r.finished_at} for r in rs]
 
 
 @router.get("/entities")

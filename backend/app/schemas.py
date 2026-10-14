@@ -17,13 +17,19 @@ class UserOut(BaseModel):
     full_name: str
     role: str
     is_active: bool
+    must_change_password: bool = False
 
     model_config = {"from_attributes": True}
 
 
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=200)
+
+
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8, max_length=200)
     full_name: str = ""
     role: str = "requester"
 
@@ -116,6 +122,7 @@ class UseCaseListItem(BaseModel):
     feasibility_score: float | None
     priority_score: float | None
     risk_tier: str | None
+    risk_stale: bool = False
     tags: list
     source: str
     owner: UserOut | None
@@ -150,7 +157,7 @@ class UseCaseUpdate(BaseModel):
 
 class TransitionIn(BaseModel):
     to: str
-    comment: str = ""
+    comment: str = Field(default="", max_length=4000)
 
 
 class DecisionOut(BaseModel):
@@ -175,25 +182,59 @@ class VersionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RiskValidationIn(BaseModel):
+    risk_tier: str
+    rationale: str = Field(default="", max_length=4000)
+
+
+class RiskValidationOut(BaseModel):
+    id: str
+    tier: str
+    rationale: str
+    validated_by: UserOut | None
+    ai_suggestion: dict
+    template_version: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AuditEventOut(BaseModel):
+    id: str
+    ts: datetime
+    actor_id: str | None
+    actor_email: str
+    channel: str
+    action: str
+    target_type: str
+    target_id: str
+    details: dict
+    client_ip: str
+    request_id: str
+    outcome: str
+
+    model_config = {"from_attributes": True}
+
+
 class ImproveIn(BaseModel):
     field_id: str
     value: Any = None
-    instruction: str = ""
+    instruction: str = Field(default="", max_length=1000)
 
 
 class NormalizeIn(BaseModel):
-    text: str
+    text: str = Field(max_length=40000)
     template_id: str | None = None
     existing: dict[str, Any] | None = None
 
 
 class IntakeStart(BaseModel):
     template_id: str | None = None
-    initial_text: str | None = None
+    initial_text: str | None = Field(default=None, max_length=40000)
 
 
 class IntakeMessage(BaseModel):
-    content: str
+    content: str = Field(min_length=1, max_length=20000)
 
 
 class IntakeOut(BaseModel):

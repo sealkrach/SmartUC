@@ -15,7 +15,7 @@ from .auth import hash_password
 from .models import Decision, Role, Status, User
 from .services import analysis
 from .services.templates import get_default_template
-from .services.usecases import create_use_case
+from .services.usecases import create_use_case, validate_risk
 
 log = logging.getLogger(__name__)
 
@@ -454,7 +454,12 @@ async def seed_demo(session: AsyncSession) -> None:
     await session.flush()
     reviewer = users[0]
     for status, owner_idx, fields in DEMO:
+        fields = dict(fields)
+        tier = fields.pop("eu_ai_act_tier", None)
+        rationale = fields.pop("eu_ai_act_rationale", "")
         uc = await create_use_case(session, template, fields, users[owner_idx], status=status, source="manual")
+        if tier:  # governance record, validated by the demo reviewer (never the owner: four-eyes)
+            await validate_risk(session, uc, reviewer, tier, rationale or "Seeded validation")
         # a plausible decision trail
         path = ["draft", "submitted", "qualified", "approved", "in_build", "in_production"]
         if status in path:

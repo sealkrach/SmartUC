@@ -52,6 +52,11 @@ export const api = {
   del: <T>(p: string) => request<T>(p, { method: "DELETE" }),
 };
 
+export async function logout() {
+  try { await request("/auth/logout", { method: "POST" }); } catch { /* token may already be invalid */ }
+  setToken(null);
+}
+
 export async function login(email: string, password: string) {
   const form = new URLSearchParams({ username: email, password });
   const res = await fetch(`${BASE}/auth/login`, { method: "POST", body: form });
@@ -63,11 +68,12 @@ export async function login(email: string, password: string) {
 // ------------------------------------------------------------------ types
 
 export type Role = "requester" | "reviewer" | "admin";
-export interface User { id: string; email: string; full_name: string; role: Role; is_active: boolean }
+export interface User { id: string; email: string; full_name: string; role: Role; is_active: boolean; must_change_password?: boolean }
 
 export interface TemplateField {
   id: string; label: string; type: string; required?: boolean; weight?: number; options?: string[];
   ai_hint?: string; entity_kind?: string; min?: number; max?: number; section: string;
+  read_only?: boolean; llm_exposable?: boolean;
 }
 export interface TemplateSection { id: string; title: string; fields: TemplateField[] }
 export interface Template {
@@ -78,7 +84,7 @@ export interface Template {
 export interface UseCaseListItem {
   id: string; ref: string; title: string; summary: string; status: string; business_unit: string;
   completeness: number; value_score: number | null; feasibility_score: number | null; priority_score: number | null;
-  risk_tier: string | null; tags: string[]; source: string; owner: User | null; ai_capability: string | null;
+  risk_tier: string | null; risk_stale?: boolean; tags: string[]; source: string; owner: User | null; ai_capability: string | null;
   suggested_relations: number; updated_at: string; created_at: string;
 }
 export interface UseCase extends UseCaseListItem {

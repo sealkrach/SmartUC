@@ -4,8 +4,8 @@ import { login } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 export default function Login() {
-  const [email, setEmail] = useState("admin@example.com");
-  const [password, setPassword] = useState("admin1234");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const nav = useNavigate();
@@ -31,17 +31,15 @@ export default function Login() {
         </div>
         <div>
           <label className="label">Email</label>
-          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+          <input className="input" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
         </div>
         <div>
           <label className="label">Password</label>
-          <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input className="input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </div>
         {error && <p className="text-sm text-rose-600">{error}</p>}
         <button className="btn-primary w-full justify-center" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-        <p className="text-[11px] text-slate-400 leading-relaxed">
-          Demo accounts: <span className="mono">admin@example.com / admin1234</span> (admin), <span className="mono">marie.dupont@example.com / demo1234</span> (reviewer), <span className="mono">karim.benali@example.com / demo1234</span> (requester).
-        </p>
+        <p className="text-[11px] text-slate-400 leading-relaxed">Access is nominative and logged. Contact an administrator for an account.</p>
       </form>
     </div>
   );

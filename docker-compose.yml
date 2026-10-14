@@ -3,12 +3,11 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-usecasehub}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-usecasehub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-usecasehub}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    # Not published on the host: only reachable from the backend container.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-usecasehub}"]
       interval: 5s
@@ -19,12 +18,13 @@ services:
     build: ./backend
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-usecasehub}:${POSTGRES_PASSWORD:-usecasehub}@db:5432/${POSTGRES_DB:-usecasehub}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-usecasehub}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-usecasehub}
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
+    # Reached through the frontend nginx (/api, /mcp). Uncomment to debug locally only:
+    # ports:
+    #   - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend/app/templates:/app/app/templates
       - uploads:/app/uploads
@@ -37,7 +37,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3000}:80"   # put a TLS-terminating reverse proxy / ingress in front
 
 volumes:
   pgdata:

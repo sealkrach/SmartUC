@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { api, getToken, setToken, type User } from "./api";
+import { api, getToken, logout as apiLogout, setToken, type User } from "./api";
 
 interface AuthCtx { user: User | null; loading: boolean; refresh: () => Promise<void>; logout: () => void }
 const Ctx = createContext<AuthCtx>({ user: null, loading: true, refresh: async () => {}, logout: () => {} });
@@ -15,7 +15,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
   useEffect(() => { void refresh(); }, []);
 
-  const logout = () => { setToken(null); setUser(null); location.href = "/login"; };
+  const logout = () => { void apiLogout().finally(() => { setToken(null); setUser(null); location.href = "/login"; }); };
   return <Ctx.Provider value={{ user, loading, refresh, logout }}>{children}</Ctx.Provider>;
 }
 

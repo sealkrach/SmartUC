@@ -4,11 +4,13 @@ import { useState } from "react";
 import { Empty, PageHeader, Spinner } from "../components/ui";
 import { api, type Relation } from "../lib/api";
 import { RelationRow } from "./UseCaseDetail";
+import { isReviewer, useAuth } from "../lib/auth";
 
 export default function RelationsInbox() {
   const [status, setStatus] = useState<"suggested" | "confirmed" | "dismissed" | "all">("suggested");
   const [type, setType] = useState("");
   const qc = useQueryClient();
+  const { user } = useAuth();
   const { data, isLoading } = useQuery({ queryKey: ["relation-inbox", status], queryFn: () => api.get<Relation[]>(`/portfolio/relations?status=${status}`) });
   const review = useMutation({
     mutationFn: ({ rid, s, t }: { rid: string; s: string; t?: string }) => api.patch(`/usecases/relations/${rid}`, { status: s, type: t }),
@@ -28,7 +30,7 @@ export default function RelationsInbox() {
         {types.map((t) => <button key={t} onClick={() => setType(t)} className={clsx("chip border capitalize", type === t ? "bg-slate-800 text-white border-slate-800" : "bg-white border-slate-300 text-slate-600")}>{t.replace("_", " ")}</button>)}
       </div>
       {isLoading ? <Spinner /> : rows.length === 0 ? <Empty title="Nothing here">{status === "suggested" ? "No pending suggestions. Run “Analyze portfolio” from the dashboard to look for new ones." : ""}</Empty> : (
-        <div className="space-y-2">{rows.map((r) => <RelationRow key={r.id} r={r} onReview={(s, t) => review.mutate({ rid: r.id, s, t })} />)}</div>
+        <div className="space-y-2">{rows.map((r) => <RelationRow key={r.id} r={r} onReview={isReviewer(user) ? (s, t) => review.mutate({ rid: r.id, s, t }) : undefined} />)}</div>
       )}
     </div>
   );
