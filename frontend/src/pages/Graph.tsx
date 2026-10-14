@@ -107,7 +107,7 @@ export default function Graph() {
   const selEdges = data?.edges.filter((e) => e.source === selected || e.target === selected) ?? [];
 
   return (
-    <div className="h-[calc(100vh-3rem)] flex flex-col">
+    <div className="h-[calc(100vh-5.5rem)] flex flex-col">
       <div className="flex flex-wrap items-center gap-4 mb-3">
         <div><h1 className="text-xl font-semibold tracking-tight">Portfolio graph</h1><p className="text-sm text-slate-500">Use cases, the entities they share, and the AI-detected relations between them. Click a node to focus.</p></div>
         <span className="flex-1" />

@@ -98,7 +98,7 @@ export default function Intake() {
   const ready = s.phase === "ready" || (s.missing_required.length === 0 && s.completeness >= 0.5);
 
   return (
-    <div className="h-[calc(100vh-3rem)] flex flex-col">
+    <div className="h-[calc(100vh-5.5rem)] flex flex-col">
       <div className="flex items-center justify-between gap-3 mb-3">
         <div>
           <div className="text-xs text-slate-500"><Link to="/intake" className="hover:underline">New use case</Link> / interview</div>

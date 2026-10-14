@@ -90,7 +90,7 @@ async def suggest_risk(definition: dict, fields: dict) -> dict:
     if "eu_ai_act_tier" in fm and tier not in fm["eu_ai_act_tier"].get("options", []):
         tier = None
     return {
-        "model": get_settings().fast_model,
+        "model": __import__("app.services.llm_settings", fromlist=["current"]).current().model_string(fast=True),
         "prompt_version": "risk-v1",
         "risk_tier": tier,
         "risk_rationale": result.get("rationale", ""),
