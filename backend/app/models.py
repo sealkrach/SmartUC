@@ -110,6 +110,16 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AppSetting(Base):
+    """Key/value application settings managed from the UI (e.g. LLM configuration). Secrets are encrypted."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class RevokedToken(Base):
     """JWT ids revoked before expiry (logout). Rows can be purged once `expires_at` has passed."""
 

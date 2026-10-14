@@ -139,6 +139,14 @@ frontend/src
 └── lib/     api.ts (client + types), auth.tsx
 ```
 
+### Réglages LLM depuis l'UI
+
+Icône en haut à droite (état de connexion, fournisseur · modèle, dernière latence) → fenêtre **LLM configuration** :
+fournisseur (Anthropic, OpenAI, Mistral, Azure OpenAI, Gemini, Ollama, custom), modèle principal et modèle rapide,
+clé API, URL de base. **Test main / Test fast** envoie un prompt de 5 tokens et mesure la latence. Admin pour
+modifier, reviewers pour tester. La clé est chiffrée en base (Fernet, dérivée de `SECRET_KEY`), jamais renvoyée
+(indice `sk-ant…3f9a`), et ces réglages priment sur le `.env`.
+
 ### Choix LLM (LiteLLM)
 
 `LLM_MODEL` accepte n'importe quelle chaîne LiteLLM : `anthropic/claude-sonnet-4-5`, `openai/gpt-4.1-mini`,

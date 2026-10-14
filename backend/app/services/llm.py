@@ -75,7 +75,10 @@ async def complete(messages: list[dict], *, fast: bool = False, temperature: flo
         raise LLMUnavailable("litellm is not installed") from e
     litellm.suppress_debug_info = True
     litellm.turn_off_message_logging = True  # never ship prompt contents to LiteLLM callbacks/logs
-    model = s.fast_model if fast else s.llm_model
+    from . import llm_settings
+
+    cfg = llm_settings.current()
+    model = cfg.model_string(fast)
     _check_provider_allowed(model)
     chars = sum(len(m.get("content") or "") for m in messages)
     try:
@@ -86,6 +89,7 @@ async def complete(messages: list[dict], *, fast: bool = False, temperature: flo
             max_tokens=max_tokens,
             timeout=s.llm_timeout_seconds,
             num_retries=s.llm_max_retries,
+            **cfg.litellm_kwargs(),
         )
     except Exception as e:  # provider/auth errors: log details server-side, generic message to clients
         log.error("LLM call failed (model=%s): %s", model, e)
