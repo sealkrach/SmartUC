@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { isReviewer, useAuth } from "../lib/auth";
 import { LlmStatusButton } from "./LlmSettings";
+import { DemoBanner } from "./DemoMode";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -56,8 +57,9 @@ export default function Layout() {
         </div>
       </aside>
       <main className="flex-1 min-w-0 overflow-auto relative">
-        <div className="sticky top-0 z-30 flex justify-end items-center h-12 px-6 bg-slate-50/90 backdrop-blur border-b border-slate-200/60">
-          <LlmStatusButton />
+        <div className="sticky top-0 z-30 bg-slate-50/90 backdrop-blur border-b border-slate-200/60">
+          <div className="flex justify-end items-center h-12 px-6"><LlmStatusButton /></div>
+          <DemoBanner />
         </div>
         <div className="max-w-[1400px] mx-auto px-6 py-5"><Outlet /></div>
       </main>

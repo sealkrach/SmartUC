@@ -28,7 +28,9 @@ docker compose up --build
 - API + Swagger : http://localhost:8000/docs
 - Premier compte : `ADMIN_EMAIL` / `ADMIN_PASSWORD` du `.env` (changement de mot de passe forcé au premier login).
 
-**Mode démo** (poste de travail uniquement) : `APP_ENV=dev` et `SEED_DEMO_DATA=true` chargent 26 use cases
+**Mode démo** : page *Users → Demo mode* (admin) → *Load demo data* charge 26 use cases fictifs tagués `demo`
+(bandeau visible par tous, retrait en un clic, aucune clé LLM requise). Sur un poste de travail, `APP_ENV=dev`
+et `SEED_DEMO_DATA=true` chargent aussi au démarrage ces use cases
 (banque/assurance, doublons et dépendances volontaires) analysés **sans LLM**, plus les comptes
 `marie.dupont@example.com` (reviewer) et `karim.benali@example.com` (requester), mot de passe `demo1234`.
 Avec une clé LLM, clique **Analyze portfolio** pour obtenir les relations jugées par le LLM.

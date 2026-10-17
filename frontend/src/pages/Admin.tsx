@@ -3,6 +3,7 @@ import { UserPlus } from "lucide-react";
 import { useState } from "react";
 import { Callout, PageHeader, Spinner } from "../components/ui";
 import { api, type User } from "../lib/api";
+import { DemoModeCard } from "../components/DemoMode";
 
 export default function Admin() {
   const qc = useQueryClient();
@@ -47,6 +48,7 @@ export default function Admin() {
           {error && <Callout kind="warn">{error}</Callout>}
           <button className="btn-primary w-full justify-center" disabled={create.isPending}>Create</button>
         </form>
+        <div className="lg:col-span-3"><DemoModeCard /></div>
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from starlette.routing import Route
 
-from .api import audit_api, auth, imports, intake, portfolio, settings_api, templates, usecases
+from .api import audit_api, auth, demo_api, imports, intake, portfolio, settings_api, templates, usecases
 from .auth import client_ip, hash_password
 from .config import get_settings
 from .db import SessionLocal, init_db
@@ -109,7 +109,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 for r in (auth.router, auth.users_router, templates.router, usecases.router, intake.router,
-          portfolio.router, imports.router, audit_api.router, settings_api.router):
+          portfolio.router, imports.router, audit_api.router, settings_api.router, demo_api.router):
     app.include_router(r, prefix="/api")
 
 
