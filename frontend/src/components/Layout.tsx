@@ -10,14 +10,14 @@ import { DemoBanner } from "./DemoMode";
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/usecases", label: "Registry", icon: Boxes },
-  { to: "/intake", label: "New use case", icon: MessageSquarePlus },
+  { to: "/intake", label: "New use case", icon: MessageSquarePlus, noGuest: true },
   { to: "/relations", label: "Relations inbox", icon: GitFork, badge: true },
   { to: "/graph", label: "Portfolio graph", icon: Network },
   { to: "/import", label: "Import", icon: FileInput, reviewer: true },
   { to: "/templates", label: "Templates", icon: Library },
-  { to: "/mcp", label: "MCP & API", icon: Plug },
+  { to: "/mcp", label: "MCP & API", icon: Plug, noGuest: true },
   { to: "/audit", label: "Audit trail", icon: ScrollText, reviewer: true },
-  { to: "/account", label: "My account", icon: UserCog },
+  { to: "/account", label: "My account", icon: UserCog, noGuest: true },
   { to: "/admin", label: "Users", icon: Users, admin: true },
 ];
 
@@ -37,7 +37,7 @@ export default function Layout() {
           </div>
         </div>
         <nav className="flex-1 px-3 py-3 space-y-0.5">
-          {NAV.filter((n) => (!n.reviewer || isReviewer(user)) && (!n.admin || user?.role === "admin")).map((n) => (
+          {NAV.filter((n) => (!n.reviewer || isReviewer(user)) && (!n.admin || user?.role === "admin") && !(n.noGuest && user?.is_demo_guest)).map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end}
               className={({ isActive }) => clsx("flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition", isActive ? "bg-slate-800 text-white" : "text-slate-300 hover:bg-slate-800/60 hover:text-white")}>
               <n.icon className="h-4 w-4" />
@@ -51,7 +51,7 @@ export default function Layout() {
         <div className="px-4 py-4 border-t border-slate-800 text-sm">
           <div className="truncate font-medium">{user?.full_name || user?.email}</div>
           <div className="flex items-center justify-between mt-1">
-            <span className="chip bg-slate-800 text-slate-300 capitalize">{user?.role}</span>
+            <span className="chip bg-slate-800 text-slate-300 capitalize">{user?.is_demo_guest ? "guest · read-only" : user?.role}</span>
             <button className="text-slate-400 hover:text-white" onClick={logout} title="Sign out"><LogOut className="h-4 w-4" /></button>
           </div>
         </div>

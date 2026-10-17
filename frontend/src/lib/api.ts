@@ -57,6 +57,13 @@ export async function logout() {
   setToken(null);
 }
 
+export async function guestLogin() {
+  const res = await fetch(`${BASE}/demo/guest-login`, { method: "POST" });
+  if (!res.ok) throw new ApiError(res.status, "The public demo is not available right now");
+  const j = await res.json();
+  setToken(j.access_token);
+}
+
 export async function login(email: string, password: string) {
   const form = new URLSearchParams({ username: email, password });
   const res = await fetch(`${BASE}/auth/login`, { method: "POST", body: form });
@@ -68,7 +75,7 @@ export async function login(email: string, password: string) {
 // ------------------------------------------------------------------ types
 
 export type Role = "requester" | "reviewer" | "admin";
-export interface User { id: string; email: string; full_name: string; role: Role; is_active: boolean; must_change_password?: boolean }
+export interface User { id: string; email: string; full_name: string; role: Role; is_active: boolean; must_change_password?: boolean; is_demo_guest?: boolean }
 
 export interface TemplateField {
   id: string; label: string; type: string; required?: boolean; weight?: number; options?: string[];

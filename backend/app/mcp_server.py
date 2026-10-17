@@ -55,7 +55,7 @@ async def _user(ctx: Context, tool: str = "") -> User:
     token = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
     async with SessionLocal() as session:
         user = await resolve_token(session, token) if token else None
-        if not user:
+        if not user or user.is_demo_guest:
             raise T.ToolError("401: Unauthorized — send 'Authorization: Bearer <API key>'")
         audit.set_request_context(request_id=str(ctx.request_id)[:32], client_ip=headers.get("x-forwarded-for", "")[:64],
                                   channel="mcp")
@@ -223,7 +223,7 @@ class BearerGate:
         if token:
             async with SessionLocal() as session:
                 user = await resolve_token(session, token)
-        if not user:
+        if not user or user.is_demo_guest:
             resp = JSONResponse({"error": "unauthorized", "detail": "Send 'Authorization: Bearer <UseCase Hub API key>'"},
                                 status_code=401, headers={"WWW-Authenticate": "Bearer"})
             await resp(scope, receive, send)

@@ -12,6 +12,7 @@ import Login from "./pages/Login";
 import McpApi from "./pages/McpApi";
 import Audit from "./pages/Audit";
 import Account from "./pages/Account";
+import DemoEntry from "./pages/DemoEntry";
 import NewUseCase from "./pages/NewUseCase";
 import Registry from "./pages/Registry";
 import RelationsInbox from "./pages/RelationsInbox";
@@ -36,6 +37,7 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/demo" element={<DemoEntry />} />
             <Route element={<Protected />}>
               <Route element={<Layout />}>
                 <Route path="/" element={<Dashboard />} />
