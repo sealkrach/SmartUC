@@ -12,7 +12,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import hash_password
-from .models import Decision, Role, Status, User
+import secrets
+
+from .models import Decision, Role, Status, UseCase, User
 from .services import analysis
 from .services.templates import get_default_template
 from .services.usecases import create_use_case, validate_risk
@@ -442,8 +444,68 @@ DEMO = [
 ]
 
 
-async def seed_demo(session: AsyncSession) -> None:
+DEMO_TAG = "demo"
+DEMO_OWNER_EMAIL = "demo-owner@smartuc.local"
+
+
+async def load_demo(session: AsyncSession, validator: User, *, owners: list[User] | None = None,
+                    reviewer: User | None = None) -> int:
+    """Create the demo portfolio, tagged `demo`. Works in production (no demo accounts, no LLM needed):
+    use cases are owned by an inactive technical user so the four-eyes rule holds for `validator`."""
     template = await get_default_template(session)
+    if owners is None:
+        owner = await session.scalar(select(User).where(User.email == DEMO_OWNER_EMAIL))
+        if not owner:
+            owner = User(email=DEMO_OWNER_EMAIL, full_name="Demo requester (sample data)", role=Role.requester.value,
+                         password_hash=hash_password(secrets.token_urlsafe(24)), is_active=False)
+            session.add(owner)
+            await session.flush()
+        owners = [owner]
+    reviewer = reviewer or validator
+    created = 0
+    for status, owner_idx, fields in DEMO:
+        fields = dict(fields)
+        tier = fields.pop("eu_ai_act_tier", None)
+        rationale = fields.pop("eu_ai_act_rationale", "")
+        uc = await create_use_case(session, template, fields, owners[owner_idx % len(owners)], status=status,
+                                   source="manual", tags=[DEMO_TAG])
+        if tier:  # governance record; validator is never the owner (four-eyes)
+            await validate_risk(session, uc, validator, tier, rationale or "Seeded validation")
+        path = ["draft", "submitted", "qualified", "approved", "in_build", "in_production"]
+        if status in path:
+            for a, b in zip(path, path[1:]):
+                if path.index(b) <= path.index(status):
+                    session.add(Decision(use_case_id=uc.id, from_status=a, to_status=b,
+                                         comment="Seeded decision (demo)", decided_by_id=reviewer.id))
+        created += 1
+    await session.commit()
+    stats = await analysis.analyze_portfolio(session, use_llm=False)  # structural + lexical, no LLM needed
+    log.info("Loaded %d demo use cases; analysis: %s", created, stats)
+    return created
+
+
+async def remove_demo(session: AsyncSession) -> int:
+    """Hard-delete every use case tagged `demo` and its dependent rows. Audit events are kept."""
+    from sqlalchemy import delete, or_, update
+
+    from .models import IntakeSession, Relation, RiskValidation, UseCaseEntity, UseCaseVersion
+
+    ucs = (await session.scalars(select(UseCase))).all()
+    ids = [u.id for u in ucs if DEMO_TAG in (u.tags or [])]
+    if not ids:
+        return 0
+    await session.execute(update(IntakeSession).where(IntakeSession.use_case_id.in_(ids)).values(use_case_id=None))
+    for model in (Relation,):
+        await session.execute(delete(model).where(or_(model.source_id.in_(ids), model.target_id.in_(ids))))
+    for model in (UseCaseEntity, UseCaseVersion, Decision, RiskValidation):
+        await session.execute(delete(model).where(model.use_case_id.in_(ids)))
+    await session.execute(delete(UseCase).where(UseCase.id.in_(ids)))
+    await session.commit()
+    return len(ids)
+
+
+async def seed_demo(session: AsyncSession) -> None:
+    """Dev-only startup seed: demo accounts (password demo1234) + the demo portfolio."""
     users = []
     for email, name, role in USERS:
         u = await session.scalar(select(User).where(User.email == email))
@@ -452,22 +514,4 @@ async def seed_demo(session: AsyncSession) -> None:
             session.add(u)
         users.append(u)
     await session.flush()
-    reviewer = users[0]
-    for status, owner_idx, fields in DEMO:
-        fields = dict(fields)
-        tier = fields.pop("eu_ai_act_tier", None)
-        rationale = fields.pop("eu_ai_act_rationale", "")
-        uc = await create_use_case(session, template, fields, users[owner_idx], status=status, source="manual")
-        if tier:  # governance record, validated by the demo reviewer (never the owner: four-eyes)
-            await validate_risk(session, uc, reviewer, tier, rationale or "Seeded validation")
-        # a plausible decision trail
-        path = ["draft", "submitted", "qualified", "approved", "in_build", "in_production"]
-        if status in path:
-            for a, b in zip(path, path[1:]):
-                if path.index(b) <= path.index(status):
-                    session.add(Decision(use_case_id=uc.id, from_status=a, to_status=b,
-                                         comment="Seeded decision", decided_by_id=reviewer.id))
-    await session.commit()
-    # structural relations + lexical overlap candidates; no LLM needed
-    stats = await analysis.analyze_portfolio(session, use_llm=False)
-    log.info("Seeded %d demo use cases; analysis: %s", len(DEMO), stats)
+    await load_demo(session, users[0], owners=users, reviewer=users[0])

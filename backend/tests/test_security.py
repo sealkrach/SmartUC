@@ -230,8 +230,8 @@ async def test_f23_health_exposes_no_config(client):
 # ------------------------------------------------------------------ F-13
 
 async def test_f13_embedding_provenance(client, admin_headers):
-    r = await client.get("/api/usecases/UC-0001", headers=admin_headers)
-    uid = r.json()["id"]
+    r = await client.get("/api/usecases?limit=1000", headers=admin_headers)
+    uid = next(u for u in r.json() if "demo" in u["tags"])["id"]  # seeded rows are analysed at load time
     async with SessionLocal() as s:
         uc = await s.get(UseCase, uid)
         assert uc.embedding_model == "hash"

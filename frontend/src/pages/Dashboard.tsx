@@ -26,6 +26,15 @@ export default function Dashboard() {
     onSuccess: () => setTimeout(() => qc.invalidateQueries(), 4000),
   });
   if (isLoading || !data) return <Spinner />;
+  if (data.total === 0) return (
+    <div>
+      <PageHeader title="Portfolio overview" subtitle="The registry is empty." />
+      <div className="card p-8 text-center text-slate-600">
+        <p className="font-medium text-slate-800">No use case yet.</p>
+        <p className="text-sm mt-1">Start with <Link to="/intake" className="text-indigo-600 hover:underline">New use case</Link>{user?.role === "admin" && <> or load the sample portfolio from <Link to="/admin" className="text-indigo-600 hover:underline">Users → Demo mode</Link></>}.</p>
+      </div>
+    </div>
+  );
 
   const statusData = STATUS_ORDER.filter((s) => data.by_status[s]).map((s) => ({ name: STATUS_LABEL[s], key: s, n: data.by_status[s] }));
   const tiers = Object.entries(data.by_risk_tier);
