@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Callout, Modal, Spinner, fmtDate } from "./ui";
 
-interface DemoStatus { active: boolean; count: number; available: number; loaded_at?: string; loaded_by?: string }
+interface DemoStatus { active: boolean; count: number; available: number; loaded_at?: string; loaded_by?: string; public?: boolean }
 
 export function useDemoStatus() {
   return useQuery({ queryKey: ["demo"], queryFn: () => api.get<DemoStatus>("/demo"), staleTime: 30_000 });
@@ -16,7 +16,8 @@ function useDemoActions() {
   const refresh = () => qc.invalidateQueries();
   const load = useMutation({ mutationFn: () => api.post<DemoStatus>("/demo/load"), onSuccess: refresh });
   const remove = useMutation({ mutationFn: () => api.post<DemoStatus>("/demo/remove"), onSuccess: refresh });
-  return { load, remove };
+  const setPublic = useMutation({ mutationFn: (enabled: boolean) => api.put<DemoStatus>("/demo/public", { enabled }), onSuccess: refresh });
+  return { load, remove, setPublic };
 }
 
 /** Thin amber banner shown to everyone while sample data is loaded. */
@@ -30,7 +31,9 @@ export function DemoBanner() {
     <>
       <div className="flex items-center gap-3 bg-amber-50 border-b border-amber-200 px-6 py-1.5 text-xs text-amber-900">
         <FlaskConical className="h-3.5 w-3.5" />
-        <span><b>Demo mode</b> — {data.count} sample use cases are loaded (tag <span className="mono">demo</span>). They are fictional and will be removed when demo mode is turned off.</span>
+        {user?.is_demo_guest
+          ? <span><b>Public demo</b> — you are browsing {data.count} fictional use cases as a read-only visitor. <a href="/login" className="underline">Sign in</a> to create or change anything.</span>
+          : <span><b>Demo mode</b> — {data.count} sample use cases are loaded (tag <span className="mono">demo</span>). They are fictional and will be removed when demo mode is turned off.{data.public && <> Public guest access is <b>on</b> (share <span className="mono">{location.origin}/demo</span>).</>}</span>}
         <span className="flex-1" />
         {user?.role === "admin" && <button className="underline hover:text-amber-700" onClick={() => setConfirm(true)}>Remove demo data</button>}
       </div>
@@ -50,8 +53,8 @@ export function DemoBanner() {
 /** Admin card: load / remove the sample portfolio. */
 export function DemoModeCard() {
   const { data, isLoading } = useDemoStatus();
-  const { load, remove } = useDemoActions();
-  const err = (load.error || remove.error) as Error | null;
+  const { load, remove, setPublic } = useDemoActions();
+  const err = (load.error || remove.error || setPublic.error) as Error | null;
   return (
     <div className="card p-4 space-y-3">
       <h3 className="text-sm font-semibold flex items-center gap-2"><FlaskConical className="h-4 w-4" /> Demo mode</h3>
@@ -59,6 +62,10 @@ export function DemoModeCard() {
       {isLoading ? <Spinner /> : data?.active ? (
         <>
           <Callout kind="ok">Active — {data.count} sample use cases, loaded {fmtDate(data.loaded_at)} by {data.loaded_by || "startup seed"}.</Callout>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" checked={!!data.public} disabled={setPublic.isPending} onChange={(e) => setPublic.mutate(e.target.checked)} />
+            <span><b>Public guest access</b> — anyone can open <span className="mono">{location.origin}/demo</span> (or “Explore the demo” on the login page) as a read-only visitor, without an account. Visitors see everything a reviewer sees but every change is refused; the MCP endpoint stays closed to them. Turning it off ends all guest sessions.</span>
+          </label>
           <button className="btn-secondary text-rose-700" disabled={remove.isPending} onClick={() => remove.mutate()}><Trash2 className="h-4 w-4" /> Remove demo data</button>
         </>
       ) : (

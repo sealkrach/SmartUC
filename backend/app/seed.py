@@ -446,6 +446,18 @@ DEMO = [
 
 DEMO_TAG = "demo"
 DEMO_OWNER_EMAIL = "demo-owner@smartuc.local"
+DEMO_GUEST_EMAIL = "demo-guest@smartuc.local"
+
+
+async def ensure_demo_guest(session: AsyncSession) -> User:
+    """Shared read-only visitor account used by the public demo (reviewer visibility, writes refused)."""
+    guest = await session.scalar(select(User).where(User.email == DEMO_GUEST_EMAIL))
+    if not guest:
+        guest = User(email=DEMO_GUEST_EMAIL, full_name="Demo visitor (read-only)", role=Role.reviewer.value,
+                     password_hash=hash_password(secrets.token_urlsafe(32)), is_active=True, is_demo_guest=True)
+        session.add(guest)
+        await session.flush()
+    return guest
 
 
 async def load_demo(session: AsyncSession, validator: User, *, owners: list[User] | None = None,

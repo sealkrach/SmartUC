@@ -29,7 +29,9 @@ docker compose up --build
 - Premier compte : `ADMIN_EMAIL` / `ADMIN_PASSWORD` du `.env` (changement de mot de passe forcé au premier login).
 
 **Mode démo** : page *Users → Demo mode* (admin) → *Load demo data* charge 26 use cases fictifs tagués `demo`
-(bandeau visible par tous, retrait en un clic, aucune clé LLM requise). Sur un poste de travail, `APP_ENV=dev`
+(bandeau visible par tous, retrait en un clic, aucune clé LLM requise). La case **Public guest access** ouvre
+`/demo` (et le bouton *Explore the demo* du login) à des visiteurs sans compte : jeton de 2 h, visibilité reviewer,
+toute écriture refusée (403), MCP fermé ; décocher révoque toutes les sessions invité. Sur un poste de travail, `APP_ENV=dev`
 et `SEED_DEMO_DATA=true` chargent aussi au démarrage ces use cases
 (banque/assurance, doublons et dépendances volontaires) analysés **sans LLM**, plus les comptes
 `marie.dupont@example.com` (reviewer) et `karim.benali@example.com` (requester), mot de passe `demo1234`.

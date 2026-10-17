@@ -18,6 +18,7 @@ class UserOut(BaseModel):
     role: str
     is_active: bool
     must_change_password: bool = False
+    is_demo_guest: bool = False
 
     model_config = {"from_attributes": True}
 

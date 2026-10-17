@@ -107,13 +107,27 @@ async def revoke_token(session: AsyncSession, token: str) -> None:
             session.add(RevokedToken(jti=payload["jti"], user_id=payload.get("sub", ""), expires_at=exp))
 
 
+GUEST_WRITE_ALLOWLIST = {"/api/auth/logout"}
+
+
 async def get_current_user(
-    token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)
+    request: Request, token: str = Depends(oauth2_scheme), session: AsyncSession = Depends(get_session)
 ) -> User:
     user = await resolve_token(session, token)
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+    if user.is_demo_guest and request.method not in ("GET", "HEAD", "OPTIONS") \
+            and request.url.path not in GUEST_WRITE_ALLOWLIST:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "The public demo is read-only. Sign in to make changes.")
     return user
+
+
+def create_guest_token(user: User, minutes: int = 120) -> str:
+    s = get_settings()
+    now = datetime.now(timezone.utc)
+    payload = {"sub": user.id, "role": user.role, "ver": user.token_version, "jti": uuid.uuid4().hex,
+               "guest": True, "iat": now, "exp": now + timedelta(minutes=minutes)}
+    return jwt.encode(payload, s.secret_key, algorithm="HS256")
 
 
 ROLE_RANK = {Role.requester.value: 0, Role.reviewer.value: 1, Role.admin.value: 2}
