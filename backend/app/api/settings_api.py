@@ -36,6 +36,10 @@ async def put_llm(payload: LLMSettingsIn, session: AsyncSession = Depends(get_se
         raise HTTPException(400, "Unknown provider")
     if llm_settings.PROVIDERS[payload.provider]["needs_base"] and not payload.api_base:
         raise HTTPException(400, "This provider needs an API base URL")
+    if payload.api_base and not payload.api_base.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "API base URL must start with http:// or https://")
+    if not payload.model.strip():
+        raise HTTPException(400, "A model name is required")
     try:
         cfg = await llm_settings.save(session, provider=payload.provider, model=payload.model,
                                       fast_model=payload.fast_model, api_base=payload.api_base,

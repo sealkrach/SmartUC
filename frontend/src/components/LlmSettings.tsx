@@ -6,7 +6,7 @@ import { api, humanize } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Callout, Modal, Spinner, fmtDate } from "./ui";
 
-interface ProviderInfo { label: string; models: string[]; needs_base: boolean }
+interface ProviderInfo { label: string; models: string[]; needs_base: boolean; free_model?: boolean }
 interface LlmConfig {
   provider: string; model: string; fast_model: string; api_base: string; has_key: boolean; key_hint: string;
   key_source: "db" | "env" | null; source: "db" | "env"; updated_at: string | null; updated_by: string;
@@ -87,7 +87,8 @@ function LlmSettingsModal({ data, canEdit, canTest, onClose }: { data: LlmConfig
           </div>
           <div>
             <label className="label">Model (main)</label>
-            <input className="input" list="llm-models" disabled={!canEdit} value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === "custom" ? "provider/model" : "model name"} />
+            <input className="input" list="llm-models" disabled={!canEdit} value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder={form.provider === "custom" ? "provider/model" : form.provider === "openai_compatible" ? "e.g. meta-llama/Llama-3.1-70B-Instruct" : "model name"} />
+            {form.provider === "openai_compatible" && <p className="text-[11px] text-slate-500 mt-1">Exact model id as served by the endpoint (<span className="mono">GET /v1/models</span>). Sent to LiteLLM as <span className="mono">openai/&lt;model&gt;</span>.</p>}
           </div>
           <div>
             <label className="label">Fast model (questions, risk, mapping)</label>
@@ -97,7 +98,8 @@ function LlmSettingsModal({ data, canEdit, canTest, onClose }: { data: LlmConfig
           {prov?.needs_base && (
             <div className="col-span-2">
               <label className="label">API base URL</label>
-              <input className="input" disabled={!canEdit} value={form.api_base} onChange={(e) => setForm({ ...form, api_base: e.target.value })} placeholder={form.provider === "ollama" ? "http://host.docker.internal:11434" : "https://<resource>.openai.azure.com"} />
+              <input className="input" disabled={!canEdit} value={form.api_base} onChange={(e) => setForm({ ...form, api_base: e.target.value })} placeholder={form.provider === "ollama" ? "http://host.docker.internal:11434" : form.provider === "openai_compatible" ? "https://openrouter.ai/api/v1  ·  http://host.docker.internal:8000/v1" : "https://<resource>.openai.azure.com"} />
+              {form.provider === "openai_compatible" && <p className="text-[11px] text-slate-500 mt-1">Base of the OpenAI-style API, usually ending in <span className="mono">/v1</span>. Local servers (vLLM, LM Studio) are reached from the backend container via <span className="mono">host.docker.internal</span>.</p>}
             </div>
           )}
           <div className="col-span-2">
