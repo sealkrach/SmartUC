@@ -19,14 +19,19 @@ class LLMSettingsIn(BaseModel):
     api_key: str | None = Field(default=None, max_length=500)  # None = keep, "" = clear
 
 
-class LLMTestIn(LLMSettingsIn):
-    """Test with unsaved values; api_key None uses the stored / env key."""
+class LLMTestIn(BaseModel):
+    """Test with unsaved values (admins); an empty body / no provider uses the stored configuration."""
+    provider: str = Field(default="", max_length=30)
+    model: str = Field(default="", max_length=120)
+    fast_model: str = Field(default="", max_length=120)
+    api_base: str = Field(default="", max_length=300)
+    api_key: str | None = Field(default=None, max_length=500)
     fast: bool = False
 
 
 class LLMModelsIn(BaseModel):
-    """Candidate connection values for model discovery (model name itself is irrelevant here)."""
-    provider: str = Field(max_length=30)
+    """Candidate connection values for model discovery; empty provider = stored configuration."""
+    provider: str = Field(default="", max_length=30)
     api_base: str = Field(default="", max_length=300)
     api_key: str | None = Field(default=None, max_length=500)
 
@@ -78,13 +83,13 @@ async def test_llm(payload: LLMTestIn | None = None, session: AsyncSession = Dep
     with candidate values is given (admins trying a configuration before saving)."""
     check_ai_quota(user)
     stored = llm_settings.current()
-    if payload and user.role == Role.admin.value:
-        data = {"provider": payload.provider, "model": payload.model, "fast_model": payload.fast_model or payload.model,
-                "api_base": payload.api_base}
-        cfg = llm_settings.LLMConfig({**data, "api_key_enc": llm_settings.encrypt(payload.api_key)} if payload.api_key
-                                     else data)
-        if not payload.api_key and stored.api_key and stored.provider == payload.provider:
-            cfg.api_key = stored.api_key  # reuse the stored key for the same provider
+    if payload and payload.provider and user.role == Role.admin.value:
+        if payload.provider not in llm_settings.PROVIDERS:
+            raise HTTPException(400, "Unknown provider")
+        if not payload.model.strip():
+            raise HTTPException(400, "A model name is required")
+        cfg = _candidate_config(payload.provider, payload.api_base, payload.api_key, payload.model)
+        cfg.fast_model = payload.fast_model.strip() or cfg.model
         fast = payload.fast
     else:
         cfg, fast = stored, bool(payload and payload.fast)
@@ -103,7 +108,7 @@ async def list_llm_models(payload: LLMModelsIn | None = None, session: AsyncSess
                           user: User = Depends(require_role(Role.reviewer))):
     """Models available to the configured key (or to the candidate values an admin is about to save)."""
     check_ai_quota(user)
-    if payload and user.role == Role.admin.value:
+    if payload and payload.provider and user.role == Role.admin.value:
         if payload.provider not in llm_settings.PROVIDERS:
             raise HTTPException(400, "Unknown provider")
         if payload.api_base and not payload.api_base.lower().startswith(("http://", "https://")):
