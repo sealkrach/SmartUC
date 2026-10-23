@@ -29,6 +29,11 @@ PROVIDERS: dict[str, dict] = {
                   "models": ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"]},
     "openai": {"label": "OpenAI", "env_key": "OPENAI_API_KEY", "needs_base": False,
                "models": ["gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o4-mini"]},
+    # Any server speaking the OpenAI chat-completions API: vLLM, LM Studio, LocalAI, OpenRouter, Together,
+    # Groq, Mistral/DeepSeek endpoints, a LiteLLM/Portkey proxy, an enterprise gateway... Model name is free text.
+    "openai_compatible": {"label": "OpenAI-compatible endpoint (vLLM, OpenRouter, LiteLLM proxy…)",
+                          "env_key": "OPENAI_COMPATIBLE_API_KEY", "needs_base": True, "litellm_prefix": "openai",
+                          "models": []},
     "mistral": {"label": "Mistral", "env_key": "MISTRAL_API_KEY", "needs_base": False,
                 "models": ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"]},
     "azure": {"label": "Azure OpenAI", "env_key": "AZURE_API_KEY", "needs_base": True,
@@ -85,14 +90,24 @@ class LLMConfig:
 
     def model_string(self, fast: bool = False) -> str:
         name = self.fast_model if fast else self.model
+        prefix = PROVIDERS.get(self.provider, {}).get("litellm_prefix")
+        if prefix:  # aliased provider: model ids may themselves contain "/" (OpenRouter, vLLM) -> always prefix
+            return f"{prefix}/{name}"
         if self.provider == "custom" or "/" in name:
             return name
         return f"{self.provider}/{name}"
 
     def litellm_kwargs(self) -> dict:
+        import os
+
         kw: dict = {}
         if self.api_key:
             kw["api_key"] = self.api_key
+        elif PROVIDERS.get(self.provider, {}).get("litellm_prefix"):
+            # Aliased providers use a dedicated env var LiteLLM does not know about: pass it explicitly
+            env_key = PROVIDERS[self.provider]["env_key"]
+            if env_key and os.environ.get(env_key):
+                kw["api_key"] = os.environ[env_key]
         if self.api_base:
             kw["api_base"] = self.api_base
         return kw
@@ -114,8 +129,8 @@ class LLMConfig:
             "provider": self.provider, "model": self.model, "fast_model": self.fast_model, "api_base": self.api_base,
             "has_key": self.has_key(), "key_hint": hint, "key_source": "db" if self.api_key else ("env" if hint else None),
             "source": self.source, "updated_at": self.updated_at, "updated_by": self.updated_by,
-            "last_check": self.last_check, "providers": {k: {"label": v["label"], "models": v["models"],
-                                                           "needs_base": v["needs_base"]} for k, v in PROVIDERS.items()},
+            "last_check": self.last_check, "providers": {k: {"label": v["label"], "models": v["models"], "needs_base": v["needs_base"],
+                              "free_model": not v["models"]} for k, v in PROVIDERS.items()},
         }
 
 
