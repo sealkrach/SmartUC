@@ -56,6 +56,13 @@ async def test_llm_settings_roundtrip_and_key_never_returned(client, admin_heade
 
     monkeypatch.setattr(litellm, "acompletion", fake_auth_error)
     r = await client.post("/api/settings/llm/test", headers=admin_headers)
+    assert r.status_code == 200 and r.json()["ok"] is False
+    # {"fast": true} and {} bodies mean "stored configuration" (what the UI sends for reviewers)
+    r = await client.post("/api/settings/llm/test", headers=admin_headers, json={"fast": True})
+    assert r.status_code == 200
+    r = await client.post("/api/settings/llm/models", headers=admin_headers, json={})
+    assert r.status_code == 200 and "ok" in r.json()
+    r = await client.post("/api/settings/llm/test", headers=admin_headers)
     assert r.status_code == 200 and r.json()["ok"] is False and r.json()["reason"] == "authentication"
     assert "SECRET-DETAIL" not in r.text
     # requester cannot test
