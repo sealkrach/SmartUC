@@ -24,6 +24,23 @@ class LLMTestIn(LLMSettingsIn):
     fast: bool = False
 
 
+class LLMModelsIn(BaseModel):
+    """Candidate connection values for model discovery (model name itself is irrelevant here)."""
+    provider: str = Field(max_length=30)
+    api_base: str = Field(default="", max_length=300)
+    api_key: str | None = Field(default=None, max_length=500)
+
+
+def _candidate_config(provider: str, api_base: str, api_key: str | None, model: str = "x") -> llm_settings.LLMConfig:
+    """Build an unsaved LLMConfig; without an explicit key, reuse the stored key when the provider matches."""
+    stored = llm_settings.current()
+    data = {"provider": provider, "model": model, "fast_model": model, "api_base": api_base}
+    cfg = llm_settings.LLMConfig({**data, "api_key_enc": llm_settings.encrypt(api_key)} if api_key else data)
+    if not api_key and stored.api_key and stored.provider == provider:
+        cfg.api_key = stored.api_key
+    return cfg
+
+
 @router.get("/llm")
 async def get_llm(_: User = Depends(get_current_user)):
     return llm_settings.current().public()
@@ -77,5 +94,26 @@ async def test_llm(payload: LLMTestIn | None = None, session: AsyncSession = Dep
     await audit.record(session, user, "settings.llm_test", target_type="settings", target_id="llm",
                        details={"model": result["model"], "ok": result["ok"], "latency_ms": result["latency_ms"],
                                 "reason": result.get("reason")}, outcome="success" if result["ok"] else "failure")
+    await session.commit()
+    return result
+
+
+@router.post("/llm/models")
+async def list_llm_models(payload: LLMModelsIn | None = None, session: AsyncSession = Depends(get_session),
+                          user: User = Depends(require_role(Role.reviewer))):
+    """Models available to the configured key (or to the candidate values an admin is about to save)."""
+    check_ai_quota(user)
+    if payload and user.role == Role.admin.value:
+        if payload.provider not in llm_settings.PROVIDERS:
+            raise HTTPException(400, "Unknown provider")
+        if payload.api_base and not payload.api_base.lower().startswith(("http://", "https://")):
+            raise HTTPException(400, "API base URL must start with http:// or https://")
+        cfg = _candidate_config(payload.provider, payload.api_base, payload.api_key)
+    else:
+        cfg = llm_settings.current()
+    result = await llm_settings.list_models(cfg)
+    await audit.record(session, user, "settings.llm_list_models", target_type="settings", target_id="llm",
+                       details={"provider": cfg.provider, "ok": result["ok"], "count": len(result["models"]),
+                                "reason": result["reason"]})
     await session.commit()
     return result

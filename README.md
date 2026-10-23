@@ -148,7 +148,9 @@ frontend/src
 Icône en haut à droite (état de connexion, fournisseur · modèle, dernière latence) → fenêtre **LLM configuration** :
 fournisseur (Anthropic, OpenAI, **OpenAI-compatible** — URL de base + clé + modèle libre pour vLLM, LM Studio,
 OpenRouter, Groq, Together, proxy LiteLLM ou passerelle d'entreprise —, Mistral, Azure OpenAI, Gemini, Ollama, custom), modèle principal et modèle rapide,
-clé API, URL de base. **Test main / Test fast** envoie un prompt de 5 tokens et mesure la latence. Admin pour
+clé API, URL de base. La liste des modèles est **interrogée en direct chez le fournisseur avec la clé configurée**
+(ou celle en cours de saisie) — Anthropic, OpenAI, OpenAI-compatible (`/v1/models`), Mistral, Gemini, Ollama ; bouton
+*Refresh*. **Test main / Test fast** envoie un prompt de 5 tokens et mesure la latence. Admin pour
 modifier, reviewers pour tester. La clé est chiffrée en base (Fernet, dérivée de `SECRET_KEY`), jamais renvoyée
 (indice `sk-ant…3f9a`), et ces réglages priment sur le `.env`.
 
