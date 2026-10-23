@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 
@@ -206,3 +207,76 @@ async def test_connection(cfg: LLMConfig, fast: bool = False) -> dict:
         log.warning("LLM connection test failed for %s: %s: %s", model, name, str(e)[:200])
         return {"ok": False, "latency_ms": ms, "model": model, "reason": reason,
                 "checked_at": datetime.now(timezone.utc).isoformat()}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Model discovery: list the models the configured key can actually use (admin/reviewer action from the UI).
+# ---------------------------------------------------------------------------------------------------------------
+
+DEFAULT_BASES = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1",
+                 "mistral": "https://api.mistral.ai/v1", "gemini": "https://generativelanguage.googleapis.com/v1beta"}
+
+
+async def list_models(cfg: LLMConfig) -> dict:
+    """Query the provider's model listing endpoint with cfg's key/base. Returns {"ok", "models", "reason"}.
+    Never surfaces provider error payloads to clients (only a coarse reason); admin-controlled base URL is
+    restricted to http(s), no redirects, short timeout."""
+    import httpx
+
+    provider = cfg.provider
+    key = cfg.litellm_kwargs().get("api_key", "")
+    base = (cfg.api_base or DEFAULT_BASES.get(provider, "")).rstrip("/")
+    if provider in ("azure", "custom"):
+        return {"ok": False, "models": [], "reason": "unsupported"}
+    if not base.lower().startswith(("http://", "https://")):
+        return {"ok": False, "models": [], "reason": "invalid_base"}
+    if provider != "ollama" and not key:
+        return {"ok": False, "models": [], "reason": "no_key"}
+
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
+    if provider == "anthropic":
+        url, headers = f"{base}/models", {"x-api-key": key, "anthropic-version": "2023-06-01"}
+        params = {"limit": "1000"}
+    elif provider == "gemini":
+        url, params = f"{base}/models", {"key": key, "pageSize": "1000"}
+    elif provider == "ollama":
+        url = f"{base}/api/tags"
+        if key:
+            headers = {"Authorization": f"Bearer {key}"}
+    else:  # openai, openai_compatible, mistral
+        if provider == "openai_compatible" and not re.search(r"/v\d+$", base):
+            base += "/v1"  # most servers mount the OpenAI API under /v1
+        url, headers = f"{base}/models", {"Authorization": f"Bearer {key}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            r = await client.get(url, headers=headers, params=params)
+    except httpx.TimeoutException:
+        return {"ok": False, "models": [], "reason": "timeout"}
+    except httpx.HTTPError as e:
+        log.warning("Model listing failed for %s: %s", provider, type(e).__name__)
+        return {"ok": False, "models": [], "reason": "connection"}
+    if r.status_code in (401, 403):
+        return {"ok": False, "models": [], "reason": "authentication"}
+    if r.status_code == 404:
+        return {"ok": False, "models": [], "reason": "not_found"}
+    if r.status_code >= 400:
+        log.warning("Model listing for %s returned HTTP %s", provider, r.status_code)
+        return {"ok": False, "models": [], "reason": "error"}
+    try:
+        body = r.json()
+    except ValueError:
+        return {"ok": False, "models": [], "reason": "error"}
+
+    models: list[str] = []
+    if provider == "gemini":
+        for m in body.get("models", []):
+            if "generateContent" in (m.get("supportedGenerationMethods") or []):
+                models.append(str(m.get("name", "")).removeprefix("models/"))
+    elif provider == "ollama":
+        models = [str(m.get("name", "")) for m in body.get("models", [])]
+    else:
+        models = [str(m.get("id", "")) for m in (body.get("data") or []) if isinstance(m, dict)]
+    models = sorted({m[:120] for m in models if m})[:500]
+    return {"ok": True, "models": models, "reason": None}

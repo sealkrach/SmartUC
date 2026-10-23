@@ -15,6 +15,10 @@ interface LlmConfig {
 }
 interface TestResult { ok: boolean; latency_ms: number; model: string; reply?: string; reason?: string; checked_at: string }
 
+const MODELS_REASON: Record<string, string> = {
+  authentication: "key rejected", not_found: "no models endpoint", unsupported: "not supported for this provider",
+  no_key: "no key", invalid_base: "invalid base URL", timeout: "timed out", connection: "cannot reach the provider", error: "provider error",
+};
 const REASON: Record<string, string> = {
   authentication: "Authentication failed — check the API key", not_found: "Model not found for this provider",
   rate_limited: "Rate limited by the provider", timeout: "Timed out (30 s)", connection: "Cannot reach the provider",
@@ -54,7 +58,26 @@ function LlmSettingsModal({ data, canEdit, canTest, onClose }: { data: LlmConfig
   const [result, setResult] = useState<TestResult | null>(data.last_check);
   const [error, setError] = useState<string | null>(null);
   const prov = data.providers[form.provider];
+  const [models, setModels] = useState<string[] | null>(null);
+  const [modelsReason, setModelsReason] = useState<string | null>(null);
   useEffect(() => { setResult(null); }, [form.provider, form.model]);
+
+  const discover = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; models: string[]; reason: string | null }>("/settings/llm/models",
+      canEdit ? { provider: form.provider, api_base: form.api_base, api_key: form.api_key || null } : {}),
+    onSuccess: (r) => { setModels(r.ok ? r.models : []); setModelsReason(r.ok ? null : r.reason ?? "error"); },
+    onError: (e: Error) => { setModels([]); setModelsReason(e.message); },
+  });
+  // Live list from the provider whenever provider/base changes and a key is usable (saved or just typed)
+  const keyUsable = !!form.api_key || (data.has_key && form.provider === data.provider) || form.provider === "ollama";
+  useEffect(() => {
+    setModels(null); setModelsReason(null);
+    if (!canTest || !keyUsable || (prov?.needs_base && !form.api_base)) return;
+    const t = setTimeout(() => discover.mutate(), form.api_key ? 600 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.provider, form.api_base, form.api_key, canTest]);
+  const suggestions = models && models.length ? models : prov?.models ?? [];
 
   const dirty = form.provider !== data.provider || form.model !== data.model || form.fast_model !== data.fast_model || form.api_base !== data.api_base || !!form.api_key;
   const save = useMutation({
@@ -94,7 +117,14 @@ function LlmSettingsModal({ data, canEdit, canTest, onClose }: { data: LlmConfig
             <label className="label">Fast model (questions, risk, mapping)</label>
             <input className="input" list="llm-models" disabled={!canEdit} value={form.fast_model} onChange={(e) => setForm({ ...form, fast_model: e.target.value })} placeholder="same as main" />
           </div>
-          <datalist id="llm-models">{prov?.models.map((m) => <option key={m} value={m} />)}</datalist>
+          <datalist id="llm-models">{suggestions.map((m) => <option key={m} value={m} />)}</datalist>
+          <div className="col-span-2 -mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+            {discover.isPending ? <><Spinner /> Fetching models from the provider…</>
+              : models && models.length ? <><span className="chip bg-emerald-100 text-emerald-800">{models.length} models</span> available to this key — type to filter the list</>
+              : modelsReason ? <span className="text-amber-700">Model list unavailable ({MODELS_REASON[modelsReason] ?? modelsReason}); showing defaults</span>
+              : keyUsable ? <span>Static suggestions</span> : <span>Enter a key to list the models it can use</span>}
+            {canTest && keyUsable && <button type="button" className="underline hover:text-slate-800" onClick={() => discover.mutate()} disabled={discover.isPending}>Refresh</button>}
+          </div>
           {prov?.needs_base && (
             <div className="col-span-2">
               <label className="label">API base URL</label>
